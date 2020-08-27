@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +69,7 @@ func prepDB() {
 	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER)")
 	usersStatement.Exec()
 	usersStatement, _ = database.Prepare("INSERT INTO users (username, password, email, created_on) VALUES (?, ?, ?, ?)")
-	subStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS subs (id INTEGER PRIMARY KEY, subname TEXT, created_by TEXT, created_on INTEGER)")
+	subStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS subs (id INTEGER PRIMARY KEY, subname TEXT, created_by INTEGER, created_on INTEGER)")
 	subStatement.Exec()
 	subStatement, _ = database.Prepare("INSERT INTO subs (subname, created_by, created_on) VALUES (?, ?, ?)")
 }
@@ -186,7 +187,11 @@ func createsub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Sub name can only have alphanumeric characters or underscore.", 403)
 		return
 	}
-	rows, _ := database.Query("SELECT subname FROM subs")
+	rows, err := database.Query("SELECT subname FROM subs")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var currentSubName string
@@ -196,20 +201,44 @@ func createsub(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	urows, err := database.Query("SELECT id, username FROM users")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	defer urows.Close()
+	var matchID int
+	for urows.Next() {
+		var id int
+		var userName string
+		urows.Scan(&id, &userName)
+		if userName == createSub.CreatedBy {
+			matchID = id
+		}
+	}
 	now := time.Now().Unix()
-	subStatement.Exec(&createSub.Subname, &createSub.CreatedBy, now)
+	subStatement.Exec(&createSub.Subname, &matchID, now)
 }
 
 func getsubdata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(r)
 	subname := vars["subname"]
-	rows, _ := database.Query("SELECT subname FROM subs")
+	rows, err := database.Query("SELECT subname, created_by FROM subs")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
 	defer rows.Close()
 	for rows.Next() {
 		var currentSubName string
-		rows.Scan(&currentSubName)
+		var createdBy int
+		rows.Scan(&currentSubName, &createdBy)
 		if currentSubName == subname {
+			response := map[string]string{
+				"createdBy": strconv.Itoa(createdBy),
+			}
+			json.NewEncoder(w).Encode(response)
 			return
 		}
 	}
