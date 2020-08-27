@@ -10,6 +10,7 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/rs/cors" // Remove in production
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -38,8 +39,10 @@ func main() {
 	router.HandleFunc("/api/register", register).Methods("POST")
 	router.HandleFunc("/api/login", login).Methods("POST")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
+	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
-	err := http.ListenAndServe(":8000", router)
+	err := http.ListenAndServe(":8000", handler) // change handler to router in production
+	// err := http.ListenAndServe(":8000", handler) in production
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
