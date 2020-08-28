@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -18,14 +19,19 @@ import (
 )
 
 const (
-	subNameMax   = 20
-	validSubName = "^[a-zA-Z0-9_]*$"
+	subNameMax     = 20
+	validSubName   = "^[a-zA-Z0-9_]*$"
+	threadTitleMax = 50
+	threadTitleMin = 1
+	threadBodyMax  = 5000
+	threadBodyMin  = 0
 )
 
 var jwtKey = []byte("cactusdangerous")
 var database *sql.DB
 var usersStatement *sql.Stmt
 var subStatement *sql.Stmt
+var threadStatement *sql.Stmt
 
 // User structure
 type User struct {
@@ -38,6 +44,14 @@ type User struct {
 type CreateSub struct {
 	Subname   string `json:"Subname"`
 	CreatedBy string `json:"CreatedBy"`
+}
+
+// Thread structure
+type Thread struct {
+	Subname     string `json:"subname"`
+	CreatedBy   string `json:"createdBy"`
+	ThreadTitle string `json:"threadTitle"`
+	ThreadBody  string `json:"threadBody"`
 }
 
 // Claims structure
@@ -55,6 +69,7 @@ func main() {
 	router.HandleFunc("/api/login", login).Methods("POST")
 	router.HandleFunc("/api/createsub", createsub).Methods("POST")
 	router.HandleFunc("/api/getsubdata/{subname}", getsubdata).Methods("GET")
+	router.HandleFunc("/api/createthread", createthread).Methods("POST")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -72,6 +87,9 @@ func prepDB() {
 	subStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS subs (id INTEGER PRIMARY KEY, subname TEXT, created_by INTEGER, created_on INTEGER)")
 	subStatement.Exec()
 	subStatement, _ = database.Prepare("INSERT INTO subs (subname, created_by, created_on) VALUES (?, ?, ?)")
+	threadStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS threads (id INTEGER PRIMARY KEY, sub_id INTEGER, created_by INTEGER, threadtitle TEXT, threadbody TEXT, created_on INTEGER)")
+	threadStatement.Exec()
+	threadStatement, _ = database.Prepare("INSERT INTO threads (id, sub_id, created_by, threadtitle, threadbody, created_on) VALUES (?, ?, ?, ?, ?, ?)")
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -178,8 +196,9 @@ func createsub(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid.", 400)
 		return
 	}
-	if len(createSub.Subname) > 20 {
-		http.Error(w, "Sub name cannot be more than 20 characters.", 403)
+	if len(createSub.Subname) > subNameMax {
+		message := "Thread title cannot be more than " + strconv.Itoa(subNameMax) + " characters."
+		http.Error(w, message, 403)
 		return
 	}
 	re := regexp.MustCompile(validSubName)
@@ -243,4 +262,73 @@ func getsubdata(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, "Sub does not exist.", 404)
+}
+
+func createthread(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var thread Thread
+	err := json.NewDecoder(r.Body).Decode(&thread)
+	if err != nil {
+		http.Error(w, "Invalid.", 400)
+		return
+	}
+	if len(thread.ThreadTitle) < threadTitleMin {
+		http.Error(w, "Thread title cannot be empty.", 403)
+		return
+	}
+	if len(thread.ThreadTitle) > threadTitleMax {
+		message := "Thread title cannot be more than " + strconv.Itoa(threadTitleMax) + " characters."
+		http.Error(w, message, 403)
+		return
+	}
+	if len(thread.ThreadBody) > threadBodyMax {
+		message := "Thread title cannot be more than " + strconv.Itoa(threadBodyMax) + " characters."
+		http.Error(w, message, 403)
+		return
+	}
+	srows, err := database.Query("SELECT id, subname FROM subs")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	defer srows.Close()
+	var subID int
+	for srows.Next() {
+		var id int
+		var subName string
+		srows.Scan(&id, &subName)
+		if subName == thread.Subname {
+			subID = id
+		}
+	}
+	urows, err := database.Query("SELECT id, username FROM users")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	defer urows.Close()
+	var userID int
+	for urows.Next() {
+		var id int
+		var userName string
+		urows.Scan(&id, &userName)
+		if userName == thread.CreatedBy {
+			userID = id
+		}
+	}
+	var lastThreadID int
+	var threadID int
+	err = database.QueryRow("SELECT id FROM threads ORDER BY id DESC LIMIT 1").Scan(&lastThreadID)
+	if err != nil {
+		fmt.Println(err)
+		threadID = 100000
+	} else {
+		threadID = lastThreadID + 1
+	}
+	now := time.Now().Unix()
+	_, err = threadStatement.Exec(&threadID, &subID, &userID, &thread.ThreadTitle, &thread.ThreadBody, now)
+	if err != nil {
+		fmt.Println(err)
+	}
+	json.NewEncoder(w).Encode(thread)
 }
