@@ -93,6 +93,18 @@ func base36to10(numBase36 string) int {
 	return int(base36.Decode(strings.ToUpper(numBase36)))
 }
 
+func getSubNameFromID(id int) (string, error) {
+	var subName string
+	err := database.QueryRow("SELECT subname FROM subs WHERE id=?", id).Scan(&subName)
+	return subName, err
+}
+
+func getUsernameFromID(id int) (string, error) {
+	var username string
+	err := database.QueryRow("SELECT username FROM users WHERE id=?", id).Scan(&username)
+	return username, err
+}
+
 func prepDB() {
 	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER)")
 	usersStatement.Exec()
@@ -309,12 +321,12 @@ func getThreadData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	thread.ID = threadID64
-	err = database.QueryRow("SELECT subname FROM subs WHERE id=?", subID).Scan(&thread.SubName)
+	thread.SubName, err = getSubNameFromID(subID)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	err = database.QueryRow("SELECT username FROM users WHERE id=?", createdByID).Scan(&thread.CreatedBy)
+	thread.CreatedBy, err = getUsernameFromID(createdByID)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
@@ -356,16 +368,4 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	json.NewEncoder(w).Encode(allListings)
-}
-
-func getSubNameFromID(id int) (string, error) {
-	var subName string
-	err := database.QueryRow("SELECT subname FROM subs WHERE id=?", id).Scan(&subName)
-	return subName, err
-}
-
-func getUsernameFromID(id int) (string, error) {
-	var username string
-	err := database.QueryRow("SELECT username FROM users WHERE id=?", id).Scan(&username)
-	return username, err
 }
