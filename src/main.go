@@ -59,7 +59,7 @@ type Thread struct {
 
 // Claims structure
 type Claims struct {
-	Username string `json:"Username"`
+	Username string `json:"username"`
 	jwt.StandardClaims
 }
 
@@ -160,36 +160,34 @@ func login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid credentials.", 401)
 		return
 	}
-	rows, _ := database.Query("SELECT username, password, email FROM users")
-	defer rows.Close()
-	for rows.Next() {
-		var v User
-		rows.Scan(&v.Username, &v.Password, &v.Email)
-		if user.Username == v.Username || user.Email == v.Email {
-			if comparePasswords([]byte(v.Password), []byte(user.Password)) {
-				expirationTime := time.Now().Add(120 * time.Minute)
-				claims := &Claims{
-					Username: user.Username,
-					StandardClaims: jwt.StandardClaims{
-						ExpiresAt: expirationTime.Unix(),
-					},
-				}
-				token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-				tokenString, err := token.SignedString(jwtKey)
-				if err != nil {
-					w.WriteHeader(http.StatusInternalServerError)
-					return
-				}
-				response := map[string]string{
-					"token":    tokenString,
-					"username": v.Username,
-				}
-				json.NewEncoder(w).Encode(response)
-				return
-			}
-		}
+	var existingUser User
+	err = database.QueryRow("SELECT username, password FROM users WHERE username=?", user.Username).Scan(&existingUser.Username, &existingUser.Password)
+	if err != nil {
+		http.Error(w, "Invalid credentials.", 401)
+		return
 	}
-	http.Error(w, "Invalid credentials.", 401)
+	if comparePasswords([]byte(existingUser.Password), []byte(user.Password)) {
+		expirationTime := time.Now().Add(120 * time.Minute)
+		claims := &Claims{
+			Username: user.Username,
+			StandardClaims: jwt.StandardClaims{
+				ExpiresAt: expirationTime.Unix(),
+			},
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		tokenString, err := token.SignedString(jwtKey)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		response := map[string]string{
+			"token":    tokenString,
+			"username": user.Username,
+		}
+		json.NewEncoder(w).Encode(response)
+	} else {
+		http.Error(w, "Invalid credentials.", 401)
+	}
 }
 
 func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
