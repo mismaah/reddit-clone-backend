@@ -35,21 +35,22 @@ var threadStatement *sql.Stmt
 
 // User structure
 type User struct {
-	Username string `json:"Username"`
-	Password string `json:"Password"`
-	Email    string `json:"Email"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Email    string `json:"email"`
 }
 
-// CreateSub structure
-type CreateSub struct {
-	Subname   string `json:"Subname"`
-	CreatedBy string `json:"CreatedBy"`
+// Sub structure
+type Sub struct {
+	SubName   string `json:"subName"`
+	CreatedBy string `json:"createdBy"`
+	CreatedOn int    `json:"createdOn"`
 }
 
 // Thread structure
 type Thread struct {
 	ID          string `json:"ID"`
-	SubName     string `json:"subname"`
+	SubName     string `json:"subName"`
 	CreatedBy   string `json:"createdBy"`
 	ThreadTitle string `json:"threadTitle"`
 	ThreadBody  string `json:"threadBody"`
@@ -201,53 +202,35 @@ func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
 
 func createSub(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var createSub CreateSub
-	err := json.NewDecoder(r.Body).Decode(&createSub)
+	var sub Sub
+	err := json.NewDecoder(r.Body).Decode(&sub)
 	if err != nil {
 		http.Error(w, "Invalid.", 400)
 		return
 	}
-	if len(createSub.Subname) > subNameMax {
+	if len(sub.SubName) > subNameMax {
 		message := "Thread title cannot be more than " + strconv.Itoa(subNameMax) + " characters."
 		http.Error(w, message, 403)
 		return
 	}
 	re := regexp.MustCompile(validSubName)
-	if !re.MatchString(createSub.Subname) {
+	if !re.MatchString(sub.SubName) {
 		http.Error(w, "Sub name can only have alphanumeric characters or underscore.", 403)
 		return
 	}
-	rows, err := database.Query("SELECT subname FROM subs")
+	err = database.QueryRow("SELECT subname FROM subs WHERE subname=?", sub.SubName).Scan()
+	if err != sql.ErrNoRows {
+		http.Error(w, "Sub exists.", 409)
+		return
+	}
+	var userID int
+	err = database.QueryRow("SELECT id FROM users WHERE username=?", sub.CreatedBy).Scan(&userID)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var currentSubName string
-		rows.Scan(&currentSubName)
-		if strings.ToLower(currentSubName) == strings.ToLower(createSub.Subname) {
-			http.Error(w, "Sub exists.", 409)
-			return
-		}
-	}
-	urows, err := database.Query("SELECT id, username FROM users")
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
-	defer urows.Close()
-	var matchID int
-	for urows.Next() {
-		var id int
-		var userName string
-		urows.Scan(&id, &userName)
-		if userName == createSub.CreatedBy {
-			matchID = id
-		}
 	}
 	now := time.Now().Unix()
-	subStatement.Exec(&createSub.Subname, &matchID, now)
+	subStatement.Exec(&sub.SubName, &userID, &now)
 }
 
 func getSubData(w http.ResponseWriter, r *http.Request) {
