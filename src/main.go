@@ -49,10 +49,12 @@ type CreateSub struct {
 
 // Thread structure
 type Thread struct {
+	ID          string `json:"ID"`
 	Subname     string `json:"subname"`
 	CreatedBy   string `json:"createdBy"`
 	ThreadTitle string `json:"threadTitle"`
 	ThreadBody  string `json:"threadBody"`
+	CreatedOn   int    `json:"createdOn"`
 }
 
 // Claims structure
@@ -68,9 +70,10 @@ func main() {
 	router.HandleFunc("/api/home", home).Methods("GET")
 	router.HandleFunc("/api/register", register).Methods("POST")
 	router.HandleFunc("/api/login", login).Methods("POST")
-	router.HandleFunc("/api/createsub", createsub).Methods("POST")
-	router.HandleFunc("/api/getsubdata/{subname}", getsubdata).Methods("GET")
-	router.HandleFunc("/api/createthread", createthread).Methods("POST")
+	router.HandleFunc("/api/createsub", createSub).Methods("POST")
+	router.HandleFunc("/api/getsubdata/{subname}", getSubData).Methods("GET")
+	router.HandleFunc("/api/createthread", createThread).Methods("POST")
+	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -79,6 +82,14 @@ func main() {
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err)
 	}
+}
+
+func base10to36(numBase10 int) string {
+	return strings.ToLower(base36.Encode(uint64(numBase10)))
+}
+
+func base36to10(numBase36 string) int {
+	return int(base36.Decode(strings.ToUpper(numBase36)))
 }
 
 func prepDB() {
@@ -189,7 +200,7 @@ func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
 	return true
 }
 
-func createsub(w http.ResponseWriter, r *http.Request) {
+func createSub(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var createSub CreateSub
 	err := json.NewDecoder(r.Body).Decode(&createSub)
@@ -240,10 +251,10 @@ func createsub(w http.ResponseWriter, r *http.Request) {
 	subStatement.Exec(&createSub.Subname, &matchID, now)
 }
 
-func getsubdata(w http.ResponseWriter, r *http.Request) {
+func getSubData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(r)
-	subname := vars["subname"]
+	subName := vars["subName"]
 	rows, err := database.Query("SELECT subname, created_by FROM subs")
 	if err != nil {
 		http.Error(w, "Server error.", 500)
@@ -254,7 +265,7 @@ func getsubdata(w http.ResponseWriter, r *http.Request) {
 		var currentSubName string
 		var createdBy int
 		rows.Scan(&currentSubName, &createdBy)
-		if currentSubName == subname {
+		if currentSubName == subName {
 			response := map[string]string{
 				"createdBy": strconv.Itoa(createdBy),
 			}
@@ -265,7 +276,7 @@ func getsubdata(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Sub does not exist.", 404)
 }
 
-func createthread(w http.ResponseWriter, r *http.Request) {
+func createThread(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var thread Thread
 	err := json.NewDecoder(r.Body).Decode(&thread)
@@ -332,30 +343,32 @@ func createthread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	json.NewEncoder(w).Encode(strings.ToLower(base36.Encode(uint64(threadID))))
+	json.NewEncoder(w).Encode(base10to36(threadID))
 }
 
-func getthreaddata(w http.ResponseWriter, r *http.Request) {
+func getThreadData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(r)
-	subname := vars["subname"]
-	rows, err := database.Query("SELECT subname, created_by FROM subs")
+	threadID64 := vars["threadid"]
+	threadID := base36to10(threadID64)
+	var thread Thread
+	var subID int
+	var createdByID int
+	err := database.QueryRow("SELECT sub_id, created_by, threadtitle, threadbody, created_on FROM threads WHERE id = ?", threadID).Scan(&subID, &createdByID, &thread.ThreadTitle, &thread.ThreadBody, &thread.CreatedOn)
+	if err != nil {
+		http.Error(w, "Thread does not exist.", 404)
+		return
+	}
+	thread.ID = threadID64
+	err = database.QueryRow("SELECT subname FROM subs WHERE id=?", subID).Scan(&thread.Subname)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var currentSubName string
-		var createdBy int
-		rows.Scan(&currentSubName, &createdBy)
-		if currentSubName == subname {
-			response := map[string]string{
-				"createdBy": strconv.Itoa(createdBy),
-			}
-			json.NewEncoder(w).Encode(response)
-			return
-		}
+	err = database.QueryRow("SELECT username FROM users WHERE id=?", createdByID).Scan(&thread.CreatedBy)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
 	}
-	http.Error(w, "Sub does not exist.", 404)
+	json.NewEncoder(w).Encode(thread)
 }
