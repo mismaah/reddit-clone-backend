@@ -254,26 +254,17 @@ func createSub(w http.ResponseWriter, r *http.Request) {
 func getSubData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(r)
-	subName := vars["subName"]
-	rows, err := database.Query("SELECT subname, created_by FROM subs")
+	subName := vars["subname"]
+	var createdBy int
+	err := database.QueryRow("Select created_by FROM subs WHERE subname=?", subName).Scan(&createdBy)
 	if err != nil {
-		http.Error(w, "Server error.", 500)
+		http.Error(w, "Sub does not exist.", 404)
 		return
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var currentSubName string
-		var createdBy int
-		rows.Scan(&currentSubName, &createdBy)
-		if currentSubName == subName {
-			response := map[string]string{
-				"createdBy": strconv.Itoa(createdBy),
-			}
-			json.NewEncoder(w).Encode(response)
-			return
-		}
+	response := map[string]string{
+		"createdBy": strconv.Itoa(createdBy),
 	}
-	http.Error(w, "Sub does not exist.", 404)
+	json.NewEncoder(w).Encode(response)
 }
 
 func createThread(w http.ResponseWriter, r *http.Request) {
