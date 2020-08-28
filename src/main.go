@@ -74,6 +74,7 @@ func main() {
 	router.HandleFunc("/api/getsubdata/{subname}", getSubData).Methods("GET")
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
+	router.HandleFunc("/api/getlistingdata/{kind}", getListingData).Methods("GET")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -99,9 +100,9 @@ func prepDB() {
 	subStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS subs (id INTEGER PRIMARY KEY, subname TEXT, created_by INTEGER, created_on INTEGER)")
 	subStatement.Exec()
 	subStatement, _ = database.Prepare("INSERT INTO subs (subname, created_by, created_on) VALUES (?, ?, ?)")
-	threadStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS threads (id INTEGER PRIMARY KEY, sub_id INTEGER, created_by INTEGER, threadtitle TEXT, threadbody TEXT, created_on INTEGER)")
+	threadStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS threads (id INTEGER PRIMARY KEY, sub_id INTEGER, created_by INTEGER, thread_title TEXT, thread_body TEXT, created_on INTEGER)")
 	threadStatement.Exec()
-	threadStatement, _ = database.Prepare("INSERT INTO threads (id, sub_id, created_by, threadtitle, threadbody, created_on) VALUES (?, ?, ?, ?, ?, ?)")
+	threadStatement, _ = database.Prepare("INSERT INTO threads (id, sub_id, created_by, thread_title, thread_body, created_on) VALUES (?, ?, ?, ?, ?, ?)")
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +303,7 @@ func getThreadData(w http.ResponseWriter, r *http.Request) {
 	var thread Thread
 	var subID int
 	var createdByID int
-	err := database.QueryRow("SELECT sub_id, created_by, threadtitle, threadbody, created_on FROM threads WHERE id = ?", threadID).Scan(&subID, &createdByID, &thread.ThreadTitle, &thread.ThreadBody, &thread.CreatedOn)
+	err := database.QueryRow("SELECT sub_id, created_by, thread_title, thread_body, created_on FROM threads WHERE id = ?", threadID).Scan(&subID, &createdByID, &thread.ThreadTitle, &thread.ThreadBody, &thread.CreatedOn)
 	if err != nil {
 		http.Error(w, "Thread does not exist.", 404)
 		return
@@ -319,4 +320,52 @@ func getThreadData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(thread)
+}
+
+func getListingData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	vars := mux.Vars(r)
+	kind := vars["kind"]
+	// id := vars["id"]
+	var allListings []Thread
+	var subID int
+	var createdByID int
+	var ID int
+	if kind == "home" {
+		rows, err := database.Query("SELECT id, sub_id, created_by, thread_title, created_on FROM threads")
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var listing Thread
+			rows.Scan(&ID, &subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
+			listing.SubName, err = getSubNameFromID(subID)
+			if err != nil {
+				http.Error(w, "Server error.", 500)
+				return
+			}
+			listing.CreatedBy, err = getUsernameFromID(createdByID)
+			if err != nil {
+				http.Error(w, "Server error.", 500)
+				return
+			}
+			listing.ID = base10to36(ID)
+			allListings = append(allListings, listing)
+		}
+	}
+	json.NewEncoder(w).Encode(allListings)
+}
+
+func getSubNameFromID(id int) (string, error) {
+	var subName string
+	err := database.QueryRow("SELECT subname FROM subs WHERE id=?", id).Scan(&subName)
+	return subName, err
+}
+
+func getUsernameFromID(id int) (string, error) {
+	var username string
+	err := database.QueryRow("SELECT username FROM users WHERE id=?", id).Scan(&username)
+	return username, err
 }
