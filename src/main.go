@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -50,7 +49,7 @@ type CreateSub struct {
 // Thread structure
 type Thread struct {
 	ID          string `json:"ID"`
-	Subname     string `json:"subname"`
+	SubName     string `json:"subname"`
 	CreatedBy   string `json:"createdBy"`
 	ThreadTitle string `json:"threadTitle"`
 	ThreadBody  string `json:"threadBody"`
@@ -289,41 +288,22 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, message, 403)
 		return
 	}
-	srows, err := database.Query("SELECT id, subname FROM subs")
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
-	defer srows.Close()
 	var subID int
-	for srows.Next() {
-		var id int
-		var subName string
-		srows.Scan(&id, &subName)
-		if subName == thread.Subname {
-			subID = id
-		}
-	}
-	urows, err := database.Query("SELECT id, username FROM users")
+	err = database.QueryRow("SELECT id FROM subs WHERE subname=?", thread.SubName).Scan(&subID)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	defer urows.Close()
 	var userID int
-	for urows.Next() {
-		var id int
-		var userName string
-		urows.Scan(&id, &userName)
-		if userName == thread.CreatedBy {
-			userID = id
-		}
+	err = database.QueryRow("SELECT id FROM users WHERE username=?", thread.CreatedBy).Scan(&userID)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
 	}
 	var lastThreadID int
 	var threadID int
 	err = database.QueryRow("SELECT id FROM threads ORDER BY id DESC LIMIT 1").Scan(&lastThreadID)
 	if err != nil {
-		fmt.Println(err)
 		threadID = 100000
 	} else {
 		threadID = lastThreadID + 1
@@ -351,7 +331,7 @@ func getThreadData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	thread.ID = threadID64
-	err = database.QueryRow("SELECT subname FROM subs WHERE id=?", subID).Scan(&thread.Subname)
+	err = database.QueryRow("SELECT subname FROM subs WHERE id=?", subID).Scan(&thread.SubName)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
