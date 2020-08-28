@@ -129,19 +129,15 @@ func register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid.", 400)
 		return
 	}
-	rows, _ := database.Query("SELECT username, password, email FROM users")
-	defer rows.Close()
-	for rows.Next() {
-		var v User
-		rows.Scan(&v.Username, &v.Password, &v.Email)
-		if user.Username == v.Username {
-			http.Error(w, "Username not available.", 409)
-			return
-		}
-		if user.Email == v.Email {
-			http.Error(w, "An account has already been registered with the email entered.", 409)
-			return
-		}
+	err = database.QueryRow("SELECT username FROM users WHERE username=?", user.Username).Scan()
+	if err != sql.ErrNoRows {
+		http.Error(w, "Username not available.", 409)
+		return
+	}
+	err = database.QueryRow("SELECT email FROM users WHERE email=?", user.Email).Scan()
+	if err != sql.ErrNoRows {
+		http.Error(w, "An account has already been registered with the email entered.", 409)
+		return
 	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
 	if err != nil {
