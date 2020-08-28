@@ -332,5 +332,30 @@ func createthread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	json.NewEncoder(w).Encode(base36.Encode(uint64(threadID)))
+	json.NewEncoder(w).Encode(strings.ToLower(base36.Encode(uint64(threadID))))
+}
+
+func getthreaddata(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	vars := mux.Vars(r)
+	subname := vars["subname"]
+	rows, err := database.Query("SELECT subname, created_by FROM subs")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var currentSubName string
+		var createdBy int
+		rows.Scan(&currentSubName, &createdBy)
+		if currentSubName == subname {
+			response := map[string]string{
+				"createdBy": strconv.Itoa(createdBy),
+			}
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}
+	http.Error(w, "Sub does not exist.", 404)
 }
