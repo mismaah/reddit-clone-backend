@@ -74,7 +74,7 @@ func main() {
 	router.HandleFunc("/api/getsubdata/{subname}", getSubData).Methods("GET")
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
-	router.HandleFunc("/api/getlistingdata/{kind}", getListingData).Methods("GET")
+	router.HandleFunc("/api/getlistingdata/{kind}/{id}", getListingData).Methods("GET")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -99,10 +99,22 @@ func getSubNameFromID(id int) (string, error) {
 	return subName, err
 }
 
+func getIDFromSubName(subName string) (int, error) {
+	var id int
+	err := database.QueryRow("SELECT id FROM subs WHERE subname=?", subName).Scan(&id)
+	return id, err
+}
+
 func getUsernameFromID(id int) (string, error) {
 	var username string
 	err := database.QueryRow("SELECT username FROM users WHERE id=?", id).Scan(&username)
 	return username, err
+}
+
+func getIDFromUsername(username string) (int, error) {
+	var id int
+	err := database.QueryRow("SELECT id FROM subs WHERE username=?", username).Scan(&id)
+	return id, err
 }
 
 func prepDB() {
@@ -338,34 +350,58 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(r)
 	kind := vars["kind"]
-	// id := vars["id"]
+	id := vars["id"]
 	var allListings []Thread
 	var subID int
 	var createdByID int
 	var ID int
-	if kind == "home" {
-		rows, err := database.Query("SELECT id, sub_id, created_by, thread_title, created_on FROM threads")
+	listingExists := false
+	rows, err := database.Query("SELECT id, sub_id, created_by, thread_title, created_on FROM threads")
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var listing Thread
+		rows.Scan(&ID, &subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
+		listing.SubName, err = getSubNameFromID(subID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
 			return
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var listing Thread
-			rows.Scan(&ID, &subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
-			listing.SubName, err = getSubNameFromID(subID)
-			if err != nil {
-				http.Error(w, "Server error.", 500)
-				return
-			}
-			listing.CreatedBy, err = getUsernameFromID(createdByID)
-			if err != nil {
-				http.Error(w, "Server error.", 500)
-				return
-			}
-			listing.ID = base10to36(ID)
+		listing.CreatedBy, err = getUsernameFromID(createdByID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		listing.ID = base10to36(ID)
+		if kind == "home" && id == "na" {
+			listingExists = true
 			allListings = append(allListings, listing)
 		}
+		if kind == "sub" {
+			if listing.SubName == id {
+				listingExists = true
+				allListings = append(allListings, listing)
+			}
+		}
+		if kind == "thread" {
+			if listing.ID == id {
+				err = database.QueryRow("SELECT thread_body FROM threads WHERE id=?", base36to10(id)).Scan(&listing.ThreadBody)
+				if err != nil {
+					http.Error(w, "Server error.", 500)
+					return
+				}
+				listingExists = true
+				json.NewEncoder(w).Encode(listing)
+				return
+			}
+		}
+	}
+	if !listingExists {
+		http.Error(w, "Thread does not exist.", 404)
+		return
 	}
 	json.NewEncoder(w).Encode(allListings)
 }
