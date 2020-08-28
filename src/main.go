@@ -13,6 +13,7 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
+	"github.com/martinlindhe/base36"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/cors" // Remove in production
 	"golang.org/x/crypto/bcrypt"
@@ -328,7 +329,8 @@ func createthread(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 	_, err = threadStatement.Exec(&threadID, &subID, &userID, &thread.ThreadTitle, &thread.ThreadBody, now)
 	if err != nil {
-		fmt.Println(err)
+		http.Error(w, "Server error.", 500)
+		return
 	}
-	json.NewEncoder(w).Encode(thread)
+	json.NewEncoder(w).Encode(base36.Encode(uint64(threadID)))
 }
