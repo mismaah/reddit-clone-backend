@@ -53,13 +53,14 @@ type Sub struct {
 
 // Thread structure
 type Thread struct {
-	ID          string `json:"ID"`
-	SubName     string `json:"subName"`
-	CreatedBy   string `json:"createdBy"`
-	ThreadTitle string `json:"threadTitle"`
-	ThreadBody  string `json:"threadBody"`
-	CreatedOn   int    `json:"createdOn"`
-	URL         string `json:"url"`
+	ID           string `json:"ID"`
+	SubName      string `json:"subName"`
+	CreatedBy    string `json:"createdBy"`
+	ThreadTitle  string `json:"threadTitle"`
+	ThreadBody   string `json:"threadBody"`
+	CreatedOn    int    `json:"createdOn"`
+	URL          string `json:"url"`
+	CommentCount int    `json:"commentCount"`
 }
 
 // Comment structure
@@ -379,6 +380,12 @@ func getThreadData(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(thread)
 }
 
+func getCommentCount(threadID int) (int, error) {
+	var count int
+	err := database.QueryRow("SELECT COUNT(*) FROM comments WHERE thread_id=?", threadID).Scan(&count)
+	return count, err
+}
+
 func getListingData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	vars := mux.Vars(r)
@@ -410,6 +417,11 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		listing.ID = base10to36(ID)
+		listing.CommentCount, err = getCommentCount(ID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
 		if kind == "home" && id == "na" {
 			listingExists = true
 			allListings = append(allListings, listing)
