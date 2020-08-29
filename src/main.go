@@ -494,7 +494,9 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 	var commentWithChildren Comment
 	var userID int
 	var commentID int
-	err := database.QueryRow("SELECT id, body, created_by FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID)
+	var subID int
+	var parentID int
+	err := database.QueryRow("SELECT id, body, created_by, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &subID, &parentID)
 	if err != nil {
 		return commentWithChildren, err
 	}
@@ -503,6 +505,11 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 	if err != nil {
 		return commentWithChildren, err
 	}
+	commentWithChildren.SubName, err = getSubNameFromID(subID)
+	if err != nil {
+		return commentWithChildren, err
+	}
+	commentWithChildren.ParentID = base10to36(parentID)
 	rows, err := database.Query("SELECT id FROM comments WHERE parent_id=?", comment.ID)
 	if err != nil {
 		return commentWithChildren, err
