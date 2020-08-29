@@ -459,11 +459,15 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 		commentID = lastCommentID + 1
 	}
 	var parentID int
+	if comment.ParentID != "" {
+		parentID = base36to10(comment.ParentID)
+	}
 	now := time.Now().Unix()
 	_, err = commentStatement.Exec(&commentID, &comment.Body, &userID, &threadID, &subID, &parentID, now)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
 	}
+	comment.ID = base10to36(commentID)
 	json.NewEncoder(w).Encode(comment)
 }
