@@ -21,12 +21,13 @@ import (
 const (
 	subNameMax     = 20
 	validSubName   = "^[a-zA-Z0-9_]*$"
-	threadTitleMax = 50
+	threadTitleMax = 100
 	threadTitleMin = 1
 	threadBodyMax  = 5000
 	threadBodyMin  = 0
 	commentMin     = 1
 	commentMax     = 5000
+	urlMax         = 50
 )
 
 var jwtKey = []byte("cactusdangerous")
@@ -58,6 +59,7 @@ type Thread struct {
 	ThreadTitle string `json:"threadTitle"`
 	ThreadBody  string `json:"threadBody"`
 	CreatedOn   int    `json:"createdOn"`
+	URL         string `json:"url"`
 }
 
 // Comment structure
@@ -130,6 +132,16 @@ func getIDFromUsername(username string) (int, error) {
 	var id int
 	err := database.QueryRow("SELECT id FROM users WHERE username=?", username).Scan(&id)
 	return id, err
+}
+
+func titleToURL(title string) string {
+	url := strings.Replace(title, " ", "_", -1)
+	pattern := regexp.MustCompile(`[^a-zA-Z\d_]`)
+	url = pattern.ReplaceAllString(url, "")
+	if len(url) > urlMax {
+		url = url[0:urlMax]
+	}
+	return url
 }
 
 func prepDB() {
@@ -332,7 +344,11 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	json.NewEncoder(w).Encode(base10to36(threadID))
+	response := map[string]string{
+		"threadID": base10to36(threadID),
+		"url":      titleToURL(thread.ThreadTitle),
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func getThreadData(w http.ResponseWriter, r *http.Request) {
@@ -381,6 +397,7 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var listing Thread
 		rows.Scan(&ID, &subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
+		listing.URL = titleToURL(listing.ThreadTitle)
 		listing.SubName, err = getSubNameFromID(subID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
