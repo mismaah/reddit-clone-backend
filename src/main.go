@@ -92,6 +92,7 @@ func main() {
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
 	router.HandleFunc("/api/getlistingdata/{kind}/{id}", getListingData).Methods("GET")
 	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
+	router.HandleFunc("/api/getcommentdata/{kind}/{id}", getCommentData).Methods("GET")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -487,4 +488,62 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 	}
 	comment.ID = base10to36(commentID)
 	json.NewEncoder(w).Encode(comment)
+}
+
+func getCommentWithChildren(comment Comment) (Comment, error) {
+	var commentWithChildren Comment
+	var userID int
+	var commentID int
+	err := database.QueryRow("SELECT id, body, created_by FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID)
+	if err != nil {
+		return commentWithChildren, err
+	}
+	commentWithChildren.ID = base10to36(commentID)
+	commentWithChildren.Username, err = getUsernameFromID(userID)
+	if err != nil {
+		return commentWithChildren, err
+	}
+	rows, err := database.Query("SELECT id FROM comments WHERE parent_id=?", comment.ID)
+	if err != nil {
+		return commentWithChildren, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var child Comment
+		rows.Scan(&child.ID)
+		children, err := getCommentWithChildren(child)
+		if err != nil {
+			return commentWithChildren, err
+		}
+		commentWithChildren.Children = append(commentWithChildren.Children, children)
+	}
+	return commentWithChildren, err
+}
+
+func getCommentData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	vars := mux.Vars(r)
+	kind := vars["kind"]
+	id := vars["id"]
+	var allComments []Comment
+	if kind == "thread" {
+		threadID := base36to10(id)
+		rows, err := database.Query("SELECT id FROM comments WHERE thread_id=? AND parent_id=0", threadID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var comment Comment
+			rows.Scan(&comment.ID)
+			commentWithChildren, err := getCommentWithChildren(comment)
+			if err != nil {
+				http.Error(w, "Server error.", 500)
+				return
+			}
+			allComments = append(allComments, commentWithChildren)
+		}
+	}
+	json.NewEncoder(w).Encode(allComments)
 }
