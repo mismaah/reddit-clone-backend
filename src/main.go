@@ -25,6 +25,8 @@ const (
 	threadTitleMin = 1
 	threadBodyMax  = 5000
 	threadBodyMin  = 0
+	commentMin     = 1
+	commentMax     = 5000
 )
 
 var jwtKey = []byte("cactusdangerous")
@@ -32,6 +34,7 @@ var database *sql.DB
 var usersStatement *sql.Stmt
 var subStatement *sql.Stmt
 var threadStatement *sql.Stmt
+var commentStatement *sql.Stmt
 
 // User structure
 type User struct {
@@ -57,6 +60,17 @@ type Thread struct {
 	CreatedOn   int    `json:"createdOn"`
 }
 
+// Comment structure
+type Comment struct {
+	ID       string    `json:"ID"`
+	Body     string    `json:"body"`
+	Username string    `json:"username"`
+	ThreadID string    `json:"threadID"`
+	SubName  string    `json:"subName"`
+	ParentID string    `json:"parent"`
+	Children []Comment `json:"children"`
+}
+
 // Claims structure
 type Claims struct {
 	Username string `json:"username"`
@@ -75,6 +89,7 @@ func main() {
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
 	router.HandleFunc("/api/getlistingdata/{kind}/{id}", getListingData).Methods("GET")
+	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -113,7 +128,7 @@ func getUsernameFromID(id int) (string, error) {
 
 func getIDFromUsername(username string) (int, error) {
 	var id int
-	err := database.QueryRow("SELECT id FROM subs WHERE username=?", username).Scan(&id)
+	err := database.QueryRow("SELECT id FROM users WHERE username=?", username).Scan(&id)
 	return id, err
 }
 
@@ -127,6 +142,9 @@ func prepDB() {
 	threadStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS threads (id INTEGER PRIMARY KEY, sub_id INTEGER, created_by INTEGER, thread_title TEXT, thread_body TEXT, created_on INTEGER)")
 	threadStatement.Exec()
 	threadStatement, _ = database.Prepare("INSERT INTO threads (id, sub_id, created_by, thread_title, thread_body, created_on) VALUES (?, ?, ?, ?, ?, ?)")
+	commentStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, body TEXT, created_by INTEGER, thread_id INTEGER, sub_id INTEGER, parent_id INTEGER, created_on INTEGER)")
+	commentStatement.Exec()
+	commentStatement, _ = database.Prepare("INSERT INTO comments (id, body, created_by, thread_id, sub_id, parent_id, created_on) VALUES (?, ?, ?, ?, ?, ?, ?)")
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -290,14 +308,12 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, message, 403)
 		return
 	}
-	var subID int
-	err = database.QueryRow("SELECT id FROM subs WHERE subname=?", thread.SubName).Scan(&subID)
+	subID, err := getIDFromSubName(thread.SubName)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	var userID int
-	err = database.QueryRow("SELECT id FROM users WHERE username=?", thread.CreatedBy).Scan(&userID)
+	userID, err := getIDFromUsername(thread.CreatedBy)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
@@ -404,4 +420,50 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(allListings)
+}
+
+func createComment(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var comment Comment
+	err := json.NewDecoder(r.Body).Decode(&comment)
+	if err != nil {
+		http.Error(w, "Invalid.", 400)
+		return
+	}
+	if len(comment.Body) < commentMin {
+		http.Error(w, "Comment cannot be empty.", 403)
+		return
+	}
+	if len(comment.Body) > commentMax {
+		message := "Thread title cannot be more than " + strconv.Itoa(commentMax) + " characters."
+		http.Error(w, message, 403)
+		return
+	}
+	subID, err := getIDFromSubName(comment.SubName)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	userID, err := getIDFromUsername(comment.Username)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	threadID := base36to10(comment.ThreadID)
+	var lastCommentID int
+	var commentID int
+	err = database.QueryRow("SELECT id FROM comments ORDER BY id DESC LIMIT 1").Scan(&lastCommentID)
+	if err != nil {
+		commentID = 1000000
+	} else {
+		commentID = lastCommentID + 1
+	}
+	var parentID int
+	now := time.Now().Unix()
+	_, err = commentStatement.Exec(&commentID, &comment.Body, &userID, &threadID, &subID, &parentID, now)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(comment)
 }
