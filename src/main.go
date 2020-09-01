@@ -88,7 +88,6 @@ func main() {
 	router.HandleFunc("/api/register", register).Methods("POST")
 	router.HandleFunc("/api/login", login).Methods("POST")
 	router.HandleFunc("/api/createsub", createSub).Methods("POST")
-	router.HandleFunc("/api/getsubdata/{subname}", getSubData).Methods("GET")
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
 	router.HandleFunc("/api/getlistingdata/{kind}/{id}", getListingData).Methods("GET")
@@ -282,22 +281,6 @@ func createSub(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().Unix()
 	subStatement.Exec(&sub.SubName, &userID, &now)
-}
-
-func getSubData(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	vars := mux.Vars(r)
-	subName := vars["subname"]
-	var createdBy int
-	err := database.QueryRow("Select created_by FROM subs WHERE subname=?", subName).Scan(&createdBy)
-	if err != nil {
-		http.Error(w, "Sub does not exist.", 404)
-		return
-	}
-	response := map[string]string{
-		"createdBy": strconv.Itoa(createdBy),
-	}
-	json.NewEncoder(w).Encode(response)
 }
 
 func createThread(w http.ResponseWriter, r *http.Request) {
