@@ -318,7 +318,7 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(thread.ThreadBody) > threadBodyMax {
-		message := "Thread title cannot be more than " + strconv.Itoa(threadBodyMax) + " characters."
+		message := "Thread body cannot be more than " + strconv.Itoa(threadBodyMax) + " characters."
 		http.Error(w, message, 403)
 		return
 	}
@@ -465,7 +465,7 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(comment.Body) > commentMax {
-		message := "Thread title cannot be more than " + strconv.Itoa(commentMax) + " characters."
+		message := "Comment cannot be more than " + strconv.Itoa(commentMax) + " characters."
 		http.Error(w, message, 403)
 		return
 	}
@@ -504,11 +504,12 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 
 func getCommentWithChildren(comment Comment) (Comment, error) {
 	var commentWithChildren Comment
-	var userID int
 	var commentID int
+	var userID int
+	var threadID int
 	var subID int
 	var parentID int
-	err := database.QueryRow("SELECT id, body, created_by, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &subID, &parentID)
+	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID)
 	if err != nil {
 		return commentWithChildren, err
 	}
@@ -517,6 +518,7 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 	if err != nil {
 		return commentWithChildren, err
 	}
+	commentWithChildren.ThreadID = base10to36(threadID)
 	commentWithChildren.SubName, err = getSubNameFromID(subID)
 	if err != nil {
 		return commentWithChildren, err
@@ -563,6 +565,52 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			}
 			allComments = append(allComments, commentWithChildren)
 		}
+	}
+	if kind == "comment" {
+		commentID := base36to10(id)
+		var comment Comment
+		err := database.QueryRow("SELECT id FROM comments WHERE id=?", commentID).Scan(&comment.ID)
+		if err != nil {
+			http.Error(w, "Comment does not exist.", 404)
+			return
+		}
+		commentWithChildren, err := getCommentWithChildren(comment)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		var listing Thread
+		listing.ID = commentWithChildren.ThreadID
+		threadID := base36to10(commentWithChildren.ThreadID)
+		var subID int
+		var createdByID int
+		err = database.QueryRow("SELECT sub_id, created_by, thread_title, created_on FROM threads WHERE id=?", threadID).Scan(&subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
+		listing.URL = titleToURL(listing.ThreadTitle)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		listing.SubName, err = getSubNameFromID(subID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		listing.CreatedBy, err = getUsernameFromID(createdByID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		listing.CommentCount, err = getCommentCount(threadID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		response := map[string]interface{}{
+			"listing": listing,
+			"comment": commentWithChildren,
+		}
+		json.NewEncoder(w).Encode(response)
+		return
 	}
 	json.NewEncoder(w).Encode(allComments)
 }
