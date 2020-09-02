@@ -36,6 +36,7 @@ var usersStatement *sql.Stmt
 var subStatement *sql.Stmt
 var threadStatement *sql.Stmt
 var commentStatement *sql.Stmt
+var voteStatement *sql.Stmt
 
 // User structure
 type User struct {
@@ -61,6 +62,8 @@ type Thread struct {
 	CreatedOn    int    `json:"createdOn"`
 	URL          string `json:"url"`
 	CommentCount int    `json:"commentCount"`
+	Points       int    `json:"points"`
+	VoteState    string `json:"voteState"`
 }
 
 // Comment structure
@@ -72,6 +75,15 @@ type Comment struct {
 	SubName  string    `json:"subName"`
 	ParentID string    `json:"parent"`
 	Children []Comment `json:"children"`
+}
+
+// Vote struct
+type Vote struct {
+	ID       int    `json:"ID"`
+	VoteType string `json:"voteType"`
+	Kind     string `json:"kind"`
+	KindID   string `json:"kindID"`
+	Username string `json:"username"`
 }
 
 // Claims structure
@@ -90,9 +102,10 @@ func main() {
 	router.HandleFunc("/api/createsub", createSub).Methods("POST")
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
-	router.HandleFunc("/api/getlistingdata/{kind}/{id}", getListingData).Methods("GET")
+	router.HandleFunc("/api/getlistingdata/{kind}/{id}/{currentuser}", getListingData).Methods("GET")
 	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
 	router.HandleFunc("/api/getcommentdata/{kind}/{id}", getCommentData).Methods("GET")
+	router.HandleFunc("/api/createvote", createVote).Methods("POST")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -158,6 +171,9 @@ func prepDB() {
 	commentStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, body TEXT, created_by INTEGER, thread_id INTEGER, sub_id INTEGER, parent_id INTEGER, created_on INTEGER)")
 	commentStatement.Exec()
 	commentStatement, _ = database.Prepare("INSERT INTO comments (id, body, created_by, thread_id, sub_id, parent_id, created_on) VALUES (?, ?, ?, ?, ?, ?, ?)")
+	voteStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS votes (id INTEGER PRIMARY KEY, vote_type TEXT, kind TEXT, kind_id INTEGER, user_id INTEGER, created_on INTEGER)")
+	voteStatement.Exec()
+	voteStatement, _ = database.Prepare("INSERT INTO votes (vote_type, kind, kind_id, user_id, created_on) VALUES (?, ?, ?, ?, ?)")
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -306,10 +322,6 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subID, err := getIDFromSubName(thread.SubName)
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
 	userID, err := getIDFromUsername(thread.CreatedBy)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
@@ -351,10 +363,6 @@ func getThreadData(w http.ResponseWriter, r *http.Request) {
 	}
 	thread.ID = threadID64
 	thread.SubName, err = getSubNameFromID(subID)
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
 	thread.CreatedBy, err = getUsernameFromID(createdByID)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
@@ -374,6 +382,8 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	kind := vars["kind"]
 	id := vars["id"]
+	currentUser := vars["currentuser"]
+	currentUserID, _ := getIDFromUsername(currentUser)
 	var allListings []Thread
 	var subID int
 	var createdByID int
@@ -390,17 +400,11 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&ID, &subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
 		listing.URL = titleToURL(listing.ThreadTitle)
 		listing.SubName, err = getSubNameFromID(subID)
-		if err != nil {
-			http.Error(w, "Server error.", 500)
-			return
-		}
 		listing.CreatedBy, err = getUsernameFromID(createdByID)
-		if err != nil {
-			http.Error(w, "Server error.", 500)
-			return
-		}
 		listing.ID = base10to36(ID)
 		listing.CommentCount, err = getCommentCount(ID)
+		listing.Points, err = countPoints("thread", ID)
+		listing.VoteState, err = getVoteState(currentUserID, "thread", ID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
 			return
@@ -453,15 +457,7 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subID, err := getIDFromSubName(comment.SubName)
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
 	userID, err := getIDFromUsername(comment.Username)
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
 	threadID := base36to10(comment.ThreadID)
 	var lastCommentID int
 	var commentID int
@@ -493,19 +489,10 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 	var subID int
 	var parentID int
 	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID)
-	if err != nil {
-		return commentWithChildren, err
-	}
 	commentWithChildren.ID = base10to36(commentID)
 	commentWithChildren.Username, err = getUsernameFromID(userID)
-	if err != nil {
-		return commentWithChildren, err
-	}
 	commentWithChildren.ThreadID = base10to36(threadID)
 	commentWithChildren.SubName, err = getSubNameFromID(subID)
-	if err != nil {
-		return commentWithChildren, err
-	}
 	commentWithChildren.ParentID = base10to36(parentID)
 	rows, err := database.Query("SELECT id FROM comments WHERE parent_id=?", comment.ID)
 	if err != nil {
@@ -558,10 +545,6 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		commentWithChildren, err := getCommentWithChildren(comment)
-		if err != nil {
-			http.Error(w, "Server error.", 500)
-			return
-		}
 		var listing Thread
 		listing.ID = commentWithChildren.ThreadID
 		threadID := base36to10(commentWithChildren.ThreadID)
@@ -569,20 +552,8 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 		var createdByID int
 		err = database.QueryRow("SELECT sub_id, created_by, thread_title, created_on FROM threads WHERE id=?", threadID).Scan(&subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
 		listing.URL = titleToURL(listing.ThreadTitle)
-		if err != nil {
-			http.Error(w, "Server error.", 500)
-			return
-		}
 		listing.SubName, err = getSubNameFromID(subID)
-		if err != nil {
-			http.Error(w, "Server error.", 500)
-			return
-		}
 		listing.CreatedBy, err = getUsernameFromID(createdByID)
-		if err != nil {
-			http.Error(w, "Server error.", 500)
-			return
-		}
 		listing.CommentCount, err = getCommentCount(threadID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
@@ -596,4 +567,76 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(allComments)
+}
+
+func createVote(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var vote Vote
+	err := json.NewDecoder(r.Body).Decode(&vote)
+	if err != nil {
+		http.Error(w, "Invalid.", 400)
+		return
+	}
+	userID, err := getIDFromUsername(vote.Username)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	kindID := base36to10(vote.KindID)
+	var existingID int
+	var existingType string
+	var voteState string
+	now := time.Now().Unix()
+	err = database.QueryRow("SELECT id, vote_type FROM votes WHERE kind=? AND kind_id=? AND user_ID=?", vote.Kind, kindID, userID).Scan(&existingID, &existingType)
+	if err == sql.ErrNoRows {
+		_, err = voteStatement.Exec(&vote.VoteType, &vote.Kind, &kindID, &userID, &now)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		voteState = vote.VoteType
+	}
+	if vote.VoteType == existingType {
+		_, err = database.Exec("DELETE FROM votes WHERE id=?", existingID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		voteState = "none"
+	} else {
+		_, err = database.Exec("UPDATE votes SET vote_type=?, created_on=? WHERE vote_type=? AND user_id=? AND kind=? and kind_id=?", vote.VoteType, now, existingType, userID, vote.Kind, kindID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		voteState = vote.VoteType
+	}
+	points, err := countPoints(vote.Kind, kindID)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	response := map[string]interface{}{
+		"voteState": voteState,
+		"points":    points,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func countPoints(kind string, kindID int) (int, error) {
+	var upCount int
+	var downCount int
+	err := database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='up' AND kind=? AND kind_id=?", kind, kindID).Scan(&upCount)
+	err = database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='down' AND kind=? AND kind_id=?", kind, kindID).Scan(&downCount)
+	return upCount - downCount, err
+}
+
+func getVoteState(userID int, kind string, kindID int) (string, error) {
+	var voteState string
+	var noVote error
+	err := database.QueryRow("SELECT vote_type FROM votes WHERE user_id=? AND kind=? AND kind_id=?", userID, kind, kindID).Scan(&voteState)
+	if err == sql.ErrNoRows {
+		return "none", noVote
+	}
+	return voteState, err
 }
