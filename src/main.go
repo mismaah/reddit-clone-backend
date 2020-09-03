@@ -68,13 +68,15 @@ type Thread struct {
 
 // Comment structure
 type Comment struct {
-	ID       string    `json:"ID"`
-	Body     string    `json:"body"`
-	Username string    `json:"username"`
-	ThreadID string    `json:"threadID"`
-	SubName  string    `json:"subName"`
-	ParentID string    `json:"parent"`
-	Children []Comment `json:"children"`
+	ID        string    `json:"ID"`
+	Body      string    `json:"body"`
+	Username  string    `json:"username"`
+	ThreadID  string    `json:"threadID"`
+	SubName   string    `json:"subName"`
+	ParentID  string    `json:"parent"`
+	Children  []Comment `json:"children"`
+	Points    int       `json:"points"`
+	VoteState string    `json:"voteState"`
 }
 
 // Vote struct
@@ -104,7 +106,7 @@ func main() {
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
 	router.HandleFunc("/api/getlistingdata", getListingData).Methods("POST")
 	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
-	router.HandleFunc("/api/getcommentdata/{kind}/{id}", getCommentData).Methods("GET")
+	router.HandleFunc("/api/getcommentdata", getCommentData).Methods("POST")
 	router.HandleFunc("/api/createvote", createVote).Methods("POST")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
@@ -490,7 +492,7 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(comment)
 }
 
-func getCommentWithChildren(comment Comment) (Comment, error) {
+func getCommentWithChildren(comment Comment, currentUserID int) (Comment, error) {
 	var commentWithChildren Comment
 	var commentID int
 	var userID int
@@ -503,6 +505,8 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 	commentWithChildren.ThreadID = base10to36(threadID)
 	commentWithChildren.SubName, err = getSubNameFromID(subID)
 	commentWithChildren.ParentID = base10to36(parentID)
+	commentWithChildren.Points, err = countPoints("comment", commentID)
+	commentWithChildren.VoteState, err = getVoteState(currentUserID, "comment", commentID)
 	rows, err := database.Query("SELECT id FROM comments WHERE parent_id=?", comment.ID)
 	if err != nil {
 		return commentWithChildren, err
@@ -511,7 +515,7 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 	for rows.Next() {
 		var child Comment
 		rows.Scan(&child.ID)
-		children, err := getCommentWithChildren(child)
+		children, err := getCommentWithChildren(child, currentUserID)
 		if err != nil {
 			return commentWithChildren, err
 		}
@@ -522,9 +526,16 @@ func getCommentWithChildren(comment Comment) (Comment, error) {
 
 func getCommentData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	vars := mux.Vars(r)
-	kind := vars["kind"]
-	id := vars["id"]
+	data := map[string]string{}
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
+		http.Error(w, "Invalid.", 400)
+		return
+	}
+	kind := data["kind"]
+	id := data["id"]
+	currentUser := data["currentUser"]
+	currentUserID, _ := getIDFromUsername(currentUser)
 	var allComments []Comment
 	if kind == "thread" {
 		threadID := base36to10(id)
@@ -537,7 +548,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var comment Comment
 			rows.Scan(&comment.ID)
-			commentWithChildren, err := getCommentWithChildren(comment)
+			commentWithChildren, err := getCommentWithChildren(comment, currentUserID)
 			if err != nil {
 				http.Error(w, "Server error.", 500)
 				return
@@ -553,26 +564,12 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Comment does not exist.", 404)
 			return
 		}
-		commentWithChildren, err := getCommentWithChildren(comment)
-		var listing Thread
-		listing.ID = commentWithChildren.ThreadID
-		threadID := base36to10(commentWithChildren.ThreadID)
-		var subID int
-		var createdByID int
-		err = database.QueryRow("SELECT sub_id, created_by, thread_title, created_on FROM threads WHERE id=?", threadID).Scan(&subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
-		listing.URL = titleToURL(listing.ThreadTitle)
-		listing.SubName, err = getSubNameFromID(subID)
-		listing.CreatedBy, err = getUsernameFromID(createdByID)
-		listing.CommentCount, err = getCommentCount(threadID)
+		commentWithChildren, err := getCommentWithChildren(comment, currentUserID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
 			return
 		}
-		response := map[string]interface{}{
-			"listing": listing,
-			"comment": commentWithChildren,
-		}
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(commentWithChildren)
 		return
 	}
 	json.NewEncoder(w).Encode(allComments)
