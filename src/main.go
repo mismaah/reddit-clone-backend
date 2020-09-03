@@ -102,7 +102,7 @@ func main() {
 	router.HandleFunc("/api/createsub", createSub).Methods("POST")
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
 	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
-	router.HandleFunc("/api/getlistingdata/{kind}/{id}/{currentuser}", getListingData).Methods("GET")
+	router.HandleFunc("/api/getlistingdata", getListingData).Methods("POST")
 	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
 	router.HandleFunc("/api/getcommentdata/{kind}/{id}", getCommentData).Methods("GET")
 	router.HandleFunc("/api/createvote", createVote).Methods("POST")
@@ -379,11 +379,15 @@ func getCommentCount(threadID int) (int, error) {
 
 func getListingData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	vars := mux.Vars(r)
-	kind := vars["kind"]
-	id := vars["id"]
-	currentUser := vars["currentuser"]
-	currentUserID, _ := getIDFromUsername(currentUser)
+	data := map[string]string{}
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
+		http.Error(w, "Invalid.", 400)
+		return
+	}
+	kind := data["kind"]
+	id := data["id"]
+	currentUserID, _ := getIDFromUsername(data["currentUser"])
 	var allListings []Thread
 	var subID int
 	var createdByID int
@@ -409,13 +413,18 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Server error.", 500)
 			return
 		}
-		if kind == "home" && id == "na" {
+		if kind == "home" && id == "" {
 			listingExists = true
 			allListings = append(allListings, listing)
 		}
 		if kind == "sub" {
+			_, err = getIDFromSubName(id)
+			if err == sql.ErrNoRows {
+				http.Error(w, "Sub does not exist.", 404)
+				return
+			}
+			listingExists = true
 			if listing.SubName == id {
-				listingExists = true
 				allListings = append(allListings, listing)
 			}
 		}
