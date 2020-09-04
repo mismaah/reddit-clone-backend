@@ -103,7 +103,6 @@ func main() {
 	router.HandleFunc("/api/login", login).Methods("POST")
 	router.HandleFunc("/api/createsub", createSub).Methods("POST")
 	router.HandleFunc("/api/createthread", createThread).Methods("POST")
-	router.HandleFunc("/api/getthreaddata/{threadid}", getThreadData).Methods("GET")
 	router.HandleFunc("/api/getlistingdata", getListingData).Methods("POST")
 	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
 	router.HandleFunc("/api/getcommentdata", getCommentData).Methods("POST")
@@ -348,35 +347,6 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		"url":      titleToURL(thread.ThreadTitle),
 	}
 	json.NewEncoder(w).Encode(response)
-}
-
-func getThreadData(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	vars := mux.Vars(r)
-	threadID64 := vars["threadid"]
-	threadID := base36to10(threadID64)
-	var thread Thread
-	var subID int
-	var createdByID int
-	err := database.QueryRow("SELECT sub_id, created_by, thread_title, thread_body, created_on FROM threads WHERE id = ?", threadID).Scan(&subID, &createdByID, &thread.ThreadTitle, &thread.ThreadBody, &thread.CreatedOn)
-	if err != nil {
-		http.Error(w, "Thread does not exist.", 404)
-		return
-	}
-	thread.ID = threadID64
-	thread.SubName, err = getSubNameFromID(subID)
-	thread.CreatedBy, err = getUsernameFromID(createdByID)
-	if err != nil {
-		http.Error(w, "Server error.", 500)
-		return
-	}
-	json.NewEncoder(w).Encode(thread)
-}
-
-func getCommentCount(threadID int) (int, error) {
-	var count int
-	err := database.QueryRow("SELECT COUNT(*) FROM comments WHERE thread_id=?", threadID).Scan(&count)
-	return count, err
 }
 
 func getListingData(w http.ResponseWriter, r *http.Request) {
