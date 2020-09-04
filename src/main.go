@@ -30,13 +30,15 @@ const (
 	urlMax         = 50
 )
 
-var jwtKey = []byte("cactusdangerous")
-var database *sql.DB
-var usersStatement *sql.Stmt
-var subStatement *sql.Stmt
-var threadStatement *sql.Stmt
-var commentStatement *sql.Stmt
-var voteStatement *sql.Stmt
+var (
+	jwtKey           = []byte("cactusdangerous")
+	database         *sql.DB
+	usersStatement   *sql.Stmt
+	subStatement     *sql.Stmt
+	threadStatement  *sql.Stmt
+	commentStatement *sql.Stmt
+	voteStatement    *sql.Stmt
+)
 
 // User structure
 type User struct {
@@ -165,6 +167,64 @@ func getCommentCount(threadID int) (int, error) {
 	return count, err
 }
 
+func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
+	err := bcrypt.CompareHashAndPassword(hashedPwd, plainPwd)
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+func getCommentWithChildren(comment Comment, currentUserID int) (Comment, error) {
+	var commentWithChildren Comment
+	var commentID int
+	var userID int
+	var threadID int
+	var subID int
+	var parentID int
+	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID)
+	commentWithChildren.ID = base10to36(commentID)
+	commentWithChildren.Username, err = getUsernameFromID(userID)
+	commentWithChildren.ThreadID = base10to36(threadID)
+	commentWithChildren.SubName, err = getSubNameFromID(subID)
+	commentWithChildren.ParentID = base10to36(parentID)
+	commentWithChildren.Points, err = countPoints("comment", commentID)
+	commentWithChildren.VoteState, err = getVoteState(currentUserID, "comment", commentID)
+	rows, err := database.Query("SELECT id FROM comments WHERE parent_id=?", comment.ID)
+	if err != nil {
+		return commentWithChildren, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var child Comment
+		rows.Scan(&child.ID)
+		children, err := getCommentWithChildren(child, currentUserID)
+		if err != nil {
+			return commentWithChildren, err
+		}
+		commentWithChildren.Children = append(commentWithChildren.Children, children)
+	}
+	return commentWithChildren, err
+}
+
+func countPoints(kind string, kindID int) (int, error) {
+	var upCount int
+	var downCount int
+	err := database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='up' AND kind=? AND kind_id=?", kind, kindID).Scan(&upCount)
+	err = database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='down' AND kind=? AND kind_id=?", kind, kindID).Scan(&downCount)
+	return upCount - downCount, err
+}
+
+func getVoteState(userID int, kind string, kindID int) (string, error) {
+	var voteState string
+	var noVote error
+	err := database.QueryRow("SELECT vote_type FROM votes WHERE user_id=? AND kind=? AND kind_id=?", userID, kind, kindID).Scan(&voteState)
+	if err == sql.ErrNoRows {
+		return "none", noVote
+	}
+	return voteState, err
+}
+
 func prepDB() {
 	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER)")
 	usersStatement.Exec()
@@ -263,14 +323,6 @@ func login(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Error(w, "Invalid credentials.", 401)
 	}
-}
-
-func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
-	err := bcrypt.CompareHashAndPassword(hashedPwd, plainPwd)
-	if err != nil {
-		return false
-	}
-	return true
 }
 
 func createSub(w http.ResponseWriter, r *http.Request) {
@@ -468,38 +520,6 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(comment)
 }
 
-func getCommentWithChildren(comment Comment, currentUserID int) (Comment, error) {
-	var commentWithChildren Comment
-	var commentID int
-	var userID int
-	var threadID int
-	var subID int
-	var parentID int
-	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID)
-	commentWithChildren.ID = base10to36(commentID)
-	commentWithChildren.Username, err = getUsernameFromID(userID)
-	commentWithChildren.ThreadID = base10to36(threadID)
-	commentWithChildren.SubName, err = getSubNameFromID(subID)
-	commentWithChildren.ParentID = base10to36(parentID)
-	commentWithChildren.Points, err = countPoints("comment", commentID)
-	commentWithChildren.VoteState, err = getVoteState(currentUserID, "comment", commentID)
-	rows, err := database.Query("SELECT id FROM comments WHERE parent_id=?", comment.ID)
-	if err != nil {
-		return commentWithChildren, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var child Comment
-		rows.Scan(&child.ID)
-		children, err := getCommentWithChildren(child, currentUserID)
-		if err != nil {
-			return commentWithChildren, err
-		}
-		commentWithChildren.Children = append(commentWithChildren.Children, children)
-	}
-	return commentWithChildren, err
-}
-
 func getCommentData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	data := map[string]string{}
@@ -603,22 +623,4 @@ func createVote(w http.ResponseWriter, r *http.Request) {
 		"points":    points,
 	}
 	json.NewEncoder(w).Encode(response)
-}
-
-func countPoints(kind string, kindID int) (int, error) {
-	var upCount int
-	var downCount int
-	err := database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='up' AND kind=? AND kind_id=?", kind, kindID).Scan(&upCount)
-	err = database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='down' AND kind=? AND kind_id=?", kind, kindID).Scan(&downCount)
-	return upCount - downCount, err
-}
-
-func getVoteState(userID int, kind string, kindID int) (string, error) {
-	var voteState string
-	var noVote error
-	err := database.QueryRow("SELECT vote_type FROM votes WHERE user_id=? AND kind=? AND kind_id=?", userID, kind, kindID).Scan(&voteState)
-	if err == sql.ErrNoRows {
-		return "none", noVote
-	}
-	return voteState, err
 }
