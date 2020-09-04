@@ -458,6 +458,17 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 				allListings = append(allListings, listing)
 			}
 		}
+		if kind == "user" {
+			_, err := getIDFromUsername(id)
+			if err == sql.ErrNoRows {
+				http.Error(w, "User does not exist.", 404)
+				return
+			}
+			listingExists = true
+			if listing.CreatedBy == id {
+				allListings = append(allListings, listing)
+			}
+		}
 		if kind == "thread" {
 			if listing.ID == id {
 				err = database.QueryRow("SELECT thread_body FROM threads WHERE id=?", base36to10(id)).Scan(&listing.ThreadBody)
@@ -567,6 +578,39 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(commentWithChildren)
 		return
+	}
+	if kind == "user" {
+		userID, err := getIDFromUsername(id)
+		if err == sql.ErrNoRows {
+			http.Error(w, "User does not exist.", 404)
+			return
+		}
+		rows, err := database.Query("SELECT id, body, thread_id, sub_id, parent_id FROM comments WHERE created_by=?", userID)
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+		defer rows.Close()
+		var commentID int
+		var threadID int
+		var subID int
+		var parentID int
+		for rows.Next() {
+			var comment Comment
+			err = rows.Scan(&commentID, &comment.Body, &threadID, &subID, &parentID)
+			comment.ID = base10to36(commentID)
+			comment.Username = id
+			comment.ThreadID = base10to36(threadID)
+			comment.SubName, err = getSubNameFromID(subID)
+			comment.ParentID = base10to36(parentID)
+			comment.Points, err = countPoints("comment", commentID)
+			comment.VoteState, err = getVoteState(currentUserID, "comment", commentID)
+			if err != nil {
+				http.Error(w, "Server error.", 500)
+				return
+			}
+			allComments = append(allComments, comment)
+		}
 	}
 	json.NewEncoder(w).Encode(allComments)
 }
