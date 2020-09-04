@@ -159,6 +159,12 @@ func titleToURL(title string) string {
 	return url
 }
 
+func getCommentCount(threadID int) (int, error) {
+	var count int
+	err := database.QueryRow("SELECT COUNT(*) FROM comments WHERE thread_id=?", threadID).Scan(&count)
+	return count, err
+}
+
 func prepDB() {
 	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER)")
 	usersStatement.Exec()
