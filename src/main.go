@@ -79,6 +79,7 @@ type Comment struct {
 	Children  []Comment `json:"children"`
 	Points    int       `json:"points"`
 	VoteState string    `json:"voteState"`
+	CreatedOn int       `json:"createdOn"`
 }
 
 // Vote struct
@@ -182,7 +183,7 @@ func getCommentWithChildren(comment Comment, currentUserID int) (Comment, error)
 	var threadID int
 	var subID int
 	var parentID int
-	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID)
+	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id, created_on FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID, &commentWithChildren.CreatedOn)
 	commentWithChildren.ID = base10to36(commentID)
 	commentWithChildren.Username, err = getUsernameFromID(userID)
 	commentWithChildren.ThreadID = base10to36(threadID)
@@ -585,7 +586,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "User does not exist.", 404)
 			return
 		}
-		rows, err := database.Query("SELECT id, body, thread_id, sub_id, parent_id FROM comments WHERE created_by=?", userID)
+		rows, err := database.Query("SELECT id, body, thread_id, sub_id, parent_id, created_on FROM comments WHERE created_by=?", userID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
 			return
@@ -597,7 +598,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 		var parentID int
 		for rows.Next() {
 			var comment Comment
-			err = rows.Scan(&commentID, &comment.Body, &threadID, &subID, &parentID)
+			err = rows.Scan(&commentID, &comment.Body, &threadID, &subID, &parentID, &comment.CreatedOn)
 			comment.ID = base10to36(commentID)
 			comment.Username = id
 			comment.ThreadID = base10to36(threadID)
