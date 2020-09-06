@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -176,7 +177,7 @@ func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
 	return true
 }
 
-func getCommentWithChildren(comment Comment, currentUserID int) (Comment, error) {
+func getCommentWithChildren(comment Comment, currentUserID int, sortBy string) (Comment, error) {
 	var commentWithChildren Comment
 	var commentID int
 	var userID int
@@ -199,12 +200,13 @@ func getCommentWithChildren(comment Comment, currentUserID int) (Comment, error)
 	for rows.Next() {
 		var child Comment
 		rows.Scan(&child.ID)
-		children, err := getCommentWithChildren(child, currentUserID)
+		children, err := getCommentWithChildren(child, currentUserID, sortBy)
 		if err != nil {
 			return commentWithChildren, err
 		}
 		commentWithChildren.Children = append(commentWithChildren.Children, children)
 	}
+	sortComments(&commentWithChildren.Children, sortBy)
 	return commentWithChildren, err
 }
 
@@ -224,6 +226,29 @@ func getVoteState(userID int, kind string, kindID int) (string, error) {
 		return "none", noVote
 	}
 	return voteState, err
+}
+
+func sortComments(comments *[]Comment, sortBy string) {
+	if sortBy == "top" || sortBy == "bottom" {
+		sort.Slice(*comments, func(i, j int) bool {
+			return (*comments)[i].Points < (*comments)[j].Points
+		})
+		if sortBy == "top" {
+			for i, j := 0, len(*comments)-1; i < j; i, j = i+1, j-1 {
+				(*comments)[i], (*comments)[j] = (*comments)[j], (*comments)[i]
+			}
+		}
+	}
+	if sortBy == "old" || sortBy == "new" {
+		sort.Slice(*comments, func(i, j int) bool {
+			return (*comments)[i].CreatedOn < (*comments)[j].CreatedOn
+		})
+		if sortBy == "new" {
+			for i, j := 0, len(*comments)-1; i < j; i, j = i+1, j-1 {
+				(*comments)[i], (*comments)[j] = (*comments)[j], (*comments)[i]
+			}
+		}
+	}
 }
 
 func prepDB() {
@@ -418,6 +443,7 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := data["kind"]
 	id := data["id"]
+	sortBy := data["sortBy"]
 	currentUserID, _ := getIDFromUsername(data["currentUser"])
 	var allListings []Thread
 	var subID int
@@ -487,6 +513,32 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Thread does not exist.", 404)
 		return
 	}
+	if sortBy == "top" || sortBy == "bottom" {
+		sort.Slice(allListings, func(i, j int) bool {
+			return allListings[i].Points < allListings[j].Points
+		})
+		if sortBy == "top" {
+			for i, j := 0, len(allListings)-1; i < j; i, j = i+1, j-1 {
+				allListings[i], allListings[j] = allListings[j], allListings[i]
+			}
+		}
+	}
+	if sortBy == "comments" {
+		sort.Slice(allListings, func(i, j int) bool {
+			return allListings[i].CommentCount > allListings[j].CommentCount
+		})
+	}
+	if sortBy == "old" || sortBy == "new" {
+		sort.Slice(allListings, func(i, j int) bool {
+			return allListings[i].CreatedOn < allListings[j].CreatedOn
+		})
+		if sortBy == "new" {
+			for i, j := 0, len(allListings)-1; i < j; i, j = i+1, j-1 {
+				allListings[i], allListings[j] = allListings[j], allListings[i]
+			}
+		}
+	}
+
 	json.NewEncoder(w).Encode(allListings)
 }
 
@@ -542,6 +594,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := data["kind"]
 	id := data["id"]
+	sortBy := data["sortBy"]
 	currentUser := data["currentUser"]
 	currentUserID, _ := getIDFromUsername(currentUser)
 	var allComments []Comment
@@ -556,7 +609,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var comment Comment
 			rows.Scan(&comment.ID)
-			commentWithChildren, err := getCommentWithChildren(comment, currentUserID)
+			commentWithChildren, err := getCommentWithChildren(comment, currentUserID, sortBy)
 			if err != nil {
 				http.Error(w, "Server error.", 500)
 				return
@@ -572,7 +625,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Comment does not exist.", 404)
 			return
 		}
-		commentWithChildren, err := getCommentWithChildren(comment, currentUserID)
+		commentWithChildren, err := getCommentWithChildren(comment, currentUserID, sortBy)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
 			return
@@ -613,6 +666,7 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			allComments = append(allComments, comment)
 		}
 	}
+	sortComments(&allComments, sortBy)
 	json.NewEncoder(w).Encode(allComments)
 }
 
