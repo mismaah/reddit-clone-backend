@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -20,15 +21,16 @@ import (
 )
 
 const (
-	subNameMax     = 20
-	validSubName   = "^[a-zA-Z0-9_]*$"
-	threadTitleMax = 100
-	threadTitleMin = 1
-	threadBodyMax  = 5000
-	threadBodyMin  = 0
-	commentMin     = 1
-	commentMax     = 5000
-	urlMax         = 50
+	subNameMax      = 20
+	validSubName    = "^[a-zA-Z0-9_]*$"
+	threadTitleMax  = 100
+	threadTitleMin  = 1
+	threadBodyMax   = 5000
+	threadBodyMin   = 0
+	commentMin      = 1
+	commentMax      = 5000
+	urlMax          = 50
+	tokenExpiration = 72 * time.Hour
 )
 
 var (
@@ -102,6 +104,7 @@ func main() {
 	database, _ = sql.Open("sqlite3", "./database.db")
 	prepDB()
 	router := mux.NewRouter().StrictSlash(true)
+	router.HandleFunc("/api/validate", validate).Methods("POST")
 	router.HandleFunc("/api/home", home).Methods("GET")
 	router.HandleFunc("/api/register", register).Methods("POST")
 	router.HandleFunc("/api/login", login).Methods("POST")
@@ -251,6 +254,32 @@ func sortComments(comments *[]Comment, sortBy string) {
 	}
 }
 
+func generateTokenString(username string) (string, error) {
+	claims := &Claims{
+		Username: username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: time.Now().Add(tokenExpiration).Unix(),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtKey)
+	return tokenString, err
+}
+
+func validateAndRenewToken(tokenString string) (string, string, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("invalid  token")
+		}
+		return []byte("cactusdangerous"), nil
+	})
+	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
+		tokenString, err := generateTokenString(claims.Username)
+		return claims.Username, tokenString, err
+	}
+	return "", "", err
+}
+
 func prepDB() {
 	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER)")
 	usersStatement.Exec()
@@ -328,15 +357,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if comparePasswords([]byte(existingUser.Password), []byte(user.Password)) {
-		expirationTime := time.Now().Add(120 * time.Minute)
-		claims := &Claims{
-			Username: user.Username,
-			StandardClaims: jwt.StandardClaims{
-				ExpiresAt: expirationTime.Unix(),
-			},
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		tokenString, err := token.SignedString(jwtKey)
+		tokenString, err := generateTokenString(user.Username)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -351,45 +372,82 @@ func login(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func createSub(w http.ResponseWriter, r *http.Request) {
+func validate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var sub Sub
-	err := json.NewDecoder(r.Body).Decode(&sub)
+	var token string
+	err := json.NewDecoder(r.Body).Decode(&token)
+	username, newToken, err := validateAndRenewToken(token)
 	if err != nil {
-		http.Error(w, "Invalid.", 400)
+		http.Error(w, "Session expired. Log in again to continue.", 401)
 		return
 	}
-	if len(sub.SubName) > subNameMax {
+	response := map[string]string{
+		"token":    newToken,
+		"username": username,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func createSub(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	data := map[string]string{}
+	err := json.NewDecoder(r.Body).Decode(&data)
+	subName := data["subName"]
+	token, ok := data["token"]
+	if !ok || err != nil {
+		http.Error(w, "Invalid.", 401)
+		return
+	}
+	username, newToken, err := validateAndRenewToken(token)
+	if err != nil {
+		http.Error(w, "Session expired. Log in again to continue.", 401)
+		return
+	}
+	if len(subName) > subNameMax {
 		message := "Thread title cannot be more than " + strconv.Itoa(subNameMax) + " characters."
 		http.Error(w, message, 403)
 		return
 	}
 	re := regexp.MustCompile(validSubName)
-	if !re.MatchString(sub.SubName) {
+	if !re.MatchString(subName) {
 		http.Error(w, "Sub name can only have alphanumeric characters or underscore.", 403)
 		return
 	}
-	err = database.QueryRow("SELECT subname FROM subs WHERE subname=?", sub.SubName).Scan()
+	err = database.QueryRow("SELECT subname FROM subs WHERE subname=?", subName).Scan()
 	if err != sql.ErrNoRows {
 		http.Error(w, "Sub exists.", 409)
 		return
 	}
-	var userID int
-	err = database.QueryRow("SELECT id FROM users WHERE username=?", sub.CreatedBy).Scan(&userID)
+	userID, err := getIDFromUsername(username)
+	now := time.Now().Unix()
+	_, err = subStatement.Exec(&subName, &userID, &now)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	now := time.Now().Unix()
-	subStatement.Exec(&sub.SubName, &userID, &now)
+	response := map[string]string{
+		"token":    newToken,
+		"username": username,
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func createThread(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	data := map[string]string{}
+	err := json.NewDecoder(r.Body).Decode(&data)
 	var thread Thread
-	err := json.NewDecoder(r.Body).Decode(&thread)
+	thread.SubName = data["subName"]
+	thread.ThreadTitle = data["threadTitle"]
+	thread.ThreadBody = data["threadBody"]
+	token, ok := data["token"]
+	if !ok || err != nil {
+		http.Error(w, "Invalid.", 401)
+		return
+	}
+	username, newToken, err := validateAndRenewToken(token)
 	if err != nil {
-		http.Error(w, "Invalid.", 400)
+		http.Error(w, "Session expired. Log in again to continue.", 401)
 		return
 	}
 	if len(thread.ThreadTitle) < threadTitleMin {
@@ -407,7 +465,7 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	subID, err := getIDFromSubName(thread.SubName)
-	userID, err := getIDFromUsername(thread.CreatedBy)
+	userID, err := getIDFromUsername(username)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
@@ -429,6 +487,8 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 	response := map[string]string{
 		"threadID": base10to36(threadID),
 		"url":      titleToURL(thread.ThreadTitle),
+		"token":    newToken,
+		"username": username,
 	}
 	json.NewEncoder(w).Encode(response)
 }
@@ -544,12 +604,23 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 
 func createComment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	data := map[string]string{}
+	err := json.NewDecoder(r.Body).Decode(&data)
 	var comment Comment
-	err := json.NewDecoder(r.Body).Decode(&comment)
-	if err != nil {
-		http.Error(w, "Invalid.", 400)
+	comment.Body = data["body"]
+	comment.ThreadID = data["threadID"]
+	comment.SubName = data["subName"]
+	token, ok := data["token"]
+	if !ok || err != nil {
+		http.Error(w, "Invalid.", 401)
 		return
 	}
+	username, newToken, err := validateAndRenewToken(token)
+	if err != nil {
+		http.Error(w, "Session expired. Log in again to continue.", 401)
+		return
+	}
+	comment.Username = username
 	if len(comment.Body) < commentMin {
 		http.Error(w, "Comment cannot be empty.", 403)
 		return
@@ -581,7 +652,7 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	comment.ID = base10to36(commentID)
-	json.NewEncoder(w).Encode(comment)
+	json.NewEncoder(w).Encode(map[string]interface{}{"comment": comment, "token": newToken})
 }
 
 func getCommentData(w http.ResponseWriter, r *http.Request) {
@@ -672,13 +743,23 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 
 func createVote(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	data := map[string]string{}
+	err := json.NewDecoder(r.Body).Decode(&data)
 	var vote Vote
-	err := json.NewDecoder(r.Body).Decode(&vote)
-	if err != nil {
-		http.Error(w, "Invalid.", 400)
+	vote.Kind = data["kind"]
+	vote.VoteType = data["voteType"]
+	vote.KindID = data["kindID"]
+	token, ok := data["token"]
+	if !ok || err != nil {
+		http.Error(w, "Invalid.", 401)
 		return
 	}
-	userID, err := getIDFromUsername(vote.Username)
+	username, newToken, err := validateAndRenewToken(token)
+	if err != nil {
+		http.Error(w, "Session expired. Log in again to continue.", 401)
+		return
+	}
+	userID, err := getIDFromUsername(username)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
@@ -718,6 +799,7 @@ func createVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := map[string]interface{}{
+		"token":     newToken,
 		"voteState": voteState,
 		"points":    points,
 	}
