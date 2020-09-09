@@ -610,6 +610,7 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 	comment.Body = data["body"]
 	comment.ThreadID = data["threadID"]
 	comment.SubName = data["subName"]
+	comment.ParentID = data["parent"]
 	token, ok := data["token"]
 	if !ok || err != nil {
 		http.Error(w, "Invalid.", 401)
