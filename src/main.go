@@ -21,6 +21,10 @@ import (
 )
 
 const (
+	usernameMax     = 20
+	usernameMin     = 4
+	passwordMin     = 6
+	validEmail      = "^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$"
 	subNameMax      = 20
 	validSubName    = "^[a-zA-Z0-9_]*$"
 	threadTitleMax  = 100
@@ -321,6 +325,26 @@ func register(w http.ResponseWriter, r *http.Request) {
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		http.Error(w, "Invalid.", 400)
+		return
+	}
+	if len(user.Username) > usernameMax {
+		message := "Username cannot be more than " + strconv.Itoa(usernameMax) + " characters."
+		http.Error(w, message, 403)
+		return
+	}
+	if len(user.Username) < usernameMin {
+		message := "Username cannot be less than " + strconv.Itoa(usernameMin) + " characters."
+		http.Error(w, message, 403)
+		return
+	}
+	if len(user.Password) < passwordMin {
+		message := "Password cannot be less than " + strconv.Itoa(passwordMin) + " characters."
+		http.Error(w, message, 403)
+		return
+	}
+	re := regexp.MustCompile(validEmail)
+	if !re.MatchString(user.Email) {
+		http.Error(w, "Invalid email.", 403)
 		return
 	}
 	err = database.QueryRow("SELECT username FROM users WHERE username=?", user.Username).Scan()
