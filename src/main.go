@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"regexp"
 	"sort"
@@ -63,16 +64,17 @@ type Sub struct {
 
 // Thread structure
 type Thread struct {
-	ID           string `json:"ID"`
-	SubName      string `json:"subName"`
-	CreatedBy    string `json:"createdBy"`
-	ThreadTitle  string `json:"threadTitle"`
-	ThreadBody   string `json:"threadBody"`
-	CreatedOn    int    `json:"createdOn"`
-	URL          string `json:"url"`
-	CommentCount int    `json:"commentCount"`
-	Points       int    `json:"points"`
-	VoteState    string `json:"voteState"`
+	ID           string  `json:"ID"`
+	SubName      string  `json:"subName"`
+	CreatedBy    string  `json:"createdBy"`
+	ThreadTitle  string  `json:"threadTitle"`
+	ThreadBody   string  `json:"threadBody"`
+	CreatedOn    int     `json:"createdOn"`
+	URL          string  `json:"url"`
+	CommentCount int     `json:"commentCount"`
+	Points       int     `json:"points"`
+	VoteState    string  `json:"voteState"`
+	HotScore     float64 `json:"hotScore"`
 }
 
 // Comment structure
@@ -223,6 +225,25 @@ func countPoints(kind string, kindID int) (int, error) {
 	err := database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='up' AND kind=? AND kind_id=?", kind, kindID).Scan(&upCount)
 	err = database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='down' AND kind=? AND kind_id=?", kind, kindID).Scan(&downCount)
 	return upCount - downCount, err
+}
+
+func getHotScore(threadID int) float64 {
+	var (
+		secondsInDay  = 86400
+		score         float64
+		threadCreated int
+	)
+	database.QueryRow("SELECT created_on FROM threads WHERE id=?", threadID).Scan(&threadCreated)
+	rows, _ := database.Query("SELECT created_on FROM votes WHERE vote_type='up' AND kind='thread' AND kind_id=?", threadID)
+	defer rows.Close()
+	for rows.Next() {
+		var voteTime int
+		rows.Scan(&voteTime)
+		timeBetweenThreadAndVote := voteTime - threadCreated
+		days := math.Ceil(float64(timeBetweenThreadAndVote) / float64(secondsInDay))
+		score += 1 / math.Pow(2, days)
+	}
+	return score
 }
 
 func getVoteState(userID int, kind string, kindID int) (string, error) {
@@ -549,6 +570,7 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		listing.ID = base10to36(ID)
 		listing.CommentCount, err = getCommentCount(ID)
 		listing.Points, err = countPoints("thread", ID)
+		listing.HotScore = getHotScore(ID)
 		listing.VoteState, err = getVoteState(currentUserID, "thread", ID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
@@ -596,6 +618,11 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	if !listingExists {
 		http.Error(w, "Thread does not exist.", 404)
 		return
+	}
+	if sortBy == "hot" {
+		sort.Slice(allListings, func(i, j int) bool {
+			return allListings[i].HotScore > allListings[j].HotScore
+		})
 	}
 	if sortBy == "top" || sortBy == "bottom" {
 		sort.Slice(allListings, func(i, j int) bool {
