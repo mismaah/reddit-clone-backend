@@ -236,20 +236,27 @@ func countPoints(kind string, kindID int) (int, error) {
 
 func getHotScore(threadID int) float64 {
 	var (
-		secondsInDay  = 86400
-		score         float64
-		threadCreated int
+		secondsInDay  = float64(86400)
+		score         = float64(1)
+		threadCreated float64
+		now           = float64(time.Now().Unix())
 	)
 	database.QueryRow("SELECT created_on FROM threads WHERE id=?", threadID).Scan(&threadCreated)
 	rows, _ := database.Query("SELECT created_on FROM votes WHERE vote_type='up' AND kind='thread' AND kind_id=?", threadID)
 	defer rows.Close()
 	for rows.Next() {
-		var voteTime int
+		var voteTime float64
 		rows.Scan(&voteTime)
 		timeBetweenThreadAndVote := voteTime - threadCreated
-		days := math.Ceil(float64(timeBetweenThreadAndVote) / float64(secondsInDay))
+		days := math.Ceil(timeBetweenThreadAndVote / secondsInDay)
+		// Vote score decreases in half every day. But all votes from the same
+		// day have the same score as days are rounded up
 		score += 1 / math.Pow(2, days)
 	}
+	timeBetweenThreadAndNow := now - float64(threadCreated)
+	// Thread score has a half life of 2 days
+	threadScore := 1 + math.Pow(0.5, (timeBetweenThreadAndNow/(secondsInDay*2)))
+	score *= threadScore
 	return score
 }
 
