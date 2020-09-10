@@ -187,12 +187,14 @@ func comparePasswords(hashedPwd []byte, plainPwd []byte) bool {
 }
 
 func getCommentWithChildren(comment Comment, currentUserID int, sortBy string) (Comment, error) {
-	var commentWithChildren Comment
-	var commentID int
-	var userID int
-	var threadID int
-	var subID int
-	var parentID int
+	var (
+		commentWithChildren Comment
+		commentID           int
+		userID              int
+		threadID            int
+		subID               int
+		parentID            int
+	)
 	err := database.QueryRow("SELECT id, body, created_by, thread_id, sub_id, parent_id, created_on FROM comments WHERE id=?", comment.ID).Scan(&commentID, &commentWithChildren.Body, &userID, &threadID, &subID, &parentID, &commentWithChildren.CreatedOn)
 	commentWithChildren.ID = base10to36(commentID)
 	commentWithChildren.Username, err = getUsernameFromID(userID)
@@ -220,8 +222,10 @@ func getCommentWithChildren(comment Comment, currentUserID int, sortBy string) (
 }
 
 func countPoints(kind string, kindID int) (int, error) {
-	var upCount int
-	var downCount int
+	var (
+		upCount   int
+		downCount int
+	)
 	err := database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='up' AND kind=? AND kind_id=?", kind, kindID).Scan(&upCount)
 	err = database.QueryRow("SELECT COUNT (*) FROM votes WHERE vote_type='down' AND kind=? AND kind_id=?", kind, kindID).Scan(&downCount)
 	return upCount - downCount, err
@@ -247,8 +251,10 @@ func getHotScore(threadID int) float64 {
 }
 
 func getVoteState(userID int, kind string, kindID int) (string, error) {
-	var voteState string
-	var noVote error
+	var (
+		voteState string
+		noVote    error
+	)
 	err := database.QueryRow("SELECT vote_type FROM votes WHERE user_id=? AND kind=? AND kind_id=?", userID, kind, kindID).Scan(&voteState)
 	if err == sql.ErrNoRows {
 		return "none", noVote
@@ -515,8 +521,10 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	var lastThreadID int
-	var threadID int
+	var (
+		lastThreadID int
+		threadID     int
+	)
 	err = database.QueryRow("SELECT id FROM threads ORDER BY id DESC LIMIT 1").Scan(&lastThreadID)
 	if err != nil {
 		threadID = 100000
@@ -550,10 +558,12 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	id := data["id"]
 	sortBy := data["sortBy"]
 	currentUserID, _ := getIDFromUsername(data["currentUser"])
-	var allListings []Thread
-	var subID int
-	var createdByID int
-	var ID int
+	var (
+		allListings []Thread
+		subID       int
+		createdByID int
+		ID          int
+	)
 	listingExists := false
 	rows, err := database.Query("SELECT id, sub_id, created_by, thread_title, created_on FROM threads")
 	if err != nil {
@@ -684,8 +694,10 @@ func createComment(w http.ResponseWriter, r *http.Request) {
 	subID, err := getIDFromSubName(comment.SubName)
 	userID, err := getIDFromUsername(comment.Username)
 	threadID := base36to10(comment.ThreadID)
-	var lastCommentID int
-	var commentID int
+	var (
+		lastCommentID int
+		commentID     int
+	)
 	err = database.QueryRow("SELECT id FROM comments ORDER BY id DESC LIMIT 1").Scan(&lastCommentID)
 	if err != nil {
 		commentID = 1000000
@@ -767,10 +779,12 @@ func getCommentData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		var commentID int
-		var threadID int
-		var subID int
-		var parentID int
+		var (
+			commentID int
+			threadID  int
+			subID     int
+			parentID  int
+		)
 		for rows.Next() {
 			var comment Comment
 			err = rows.Scan(&commentID, &comment.Body, &threadID, &subID, &parentID, &comment.CreatedOn)
@@ -816,9 +830,11 @@ func createVote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kindID := base36to10(vote.KindID)
-	var existingID int
-	var existingType string
-	var voteState string
+	var (
+		existingID   int
+		existingType string
+		voteState    string
+	)
 	now := time.Now().Unix()
 	err = database.QueryRow("SELECT id, vote_type FROM votes WHERE kind=? AND kind_id=? AND user_ID=?", vote.Kind, kindID, userID).Scan(&existingID, &existingType)
 	if err == sql.ErrNoRows {
