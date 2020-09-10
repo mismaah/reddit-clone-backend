@@ -253,7 +253,7 @@ func getHotScore(threadID int) float64 {
 		// day have the same score as days are rounded up
 		score += 1 / math.Pow(2, days)
 	}
-	timeBetweenThreadAndNow := now - float64(threadCreated)
+	timeBetweenThreadAndNow := now - threadCreated
 	// Thread score has a half life of 2 days
 	threadScore := 1 + math.Pow(0.5, (timeBetweenThreadAndNow/(secondsInDay*2)))
 	score *= threadScore
