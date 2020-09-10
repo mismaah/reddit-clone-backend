@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -50,9 +51,10 @@ var (
 
 // User structure
 type User struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Email    string `json:"email"`
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Email       string `json:"email"`
+	Preferences string `json:"preferences"`
 }
 
 // Sub structure
@@ -120,6 +122,7 @@ func main() {
 	router.HandleFunc("/api/createcomment", createComment).Methods("POST")
 	router.HandleFunc("/api/getcommentdata", getCommentData).Methods("POST")
 	router.HandleFunc("/api/createvote", createVote).Methods("POST")
+	router.HandleFunc("/api/updatepref", updatePreferences).Methods("POST")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -312,7 +315,7 @@ func validateAndRenewToken(tokenString string) (string, string, error) {
 }
 
 func prepDB() {
-	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER)")
+	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER, preferences TEXT)")
 	usersStatement.Exec()
 	usersStatement, _ = database.Prepare("INSERT INTO users (username, password, email, created_on) VALUES (?, ?, ?, ?)")
 	subStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS subs (id INTEGER PRIMARY KEY, subname TEXT, created_by INTEGER, created_on INTEGER)")
@@ -402,10 +405,14 @@ func login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var existingUser User
-	err = database.QueryRow("SELECT username, password FROM users WHERE username=?", user.Username).Scan(&existingUser.Username, &existingUser.Password)
+	var preferences sql.NullString
+	err = database.QueryRow("SELECT username, password, preferences FROM users WHERE username=?", user.Username).Scan(&existingUser.Username, &existingUser.Password, &preferences)
 	if err != nil {
 		http.Error(w, "Invalid credentials.", 401)
 		return
+	}
+	if preferences.Valid {
+		existingUser.Preferences = preferences.String
 	}
 	if comparePasswords([]byte(existingUser.Password), []byte(user.Password)) {
 		tokenString, err := generateTokenString(user.Username)
@@ -414,8 +421,9 @@ func login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		response := map[string]string{
-			"token":    tokenString,
-			"username": user.Username,
+			"token":       tokenString,
+			"username":    user.Username,
+			"preferences": existingUser.Preferences,
 		}
 		json.NewEncoder(w).Encode(response)
 	} else {
@@ -869,6 +877,41 @@ func createVote(w http.ResponseWriter, r *http.Request) {
 		"token":     newToken,
 		"voteState": voteState,
 		"points":    points,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func updatePreferences(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	data := map[string]interface{}{}
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	buf := new(bytes.Buffer)
+	json.NewEncoder(buf).Encode(data["preferences"])
+	preferences := buf.String()
+	preferences = preferences[:len(preferences)-1]
+	token, ok := data["token"].(string)
+	if !ok || err != nil {
+		http.Error(w, "Invalid.", 401)
+		return
+	}
+	username, newToken, err := validateAndRenewToken(token)
+	if err != nil {
+		http.Error(w, "Session expired. Log in again to continue.", 401)
+		return
+	}
+	userID, err := getIDFromUsername(username)
+	_, err = database.Exec("UPDATE users SET preferences=? WHERE id=?", preferences, userID)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	response := map[string]string{
+		"token":       newToken,
+		"preferences": preferences,
 	}
 	json.NewEncoder(w).Encode(response)
 }
