@@ -569,8 +569,6 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		listing.CreatedBy, err = getUsernameFromID(createdByID)
 		listing.ID = base10to36(ID)
 		listing.CommentCount, err = getCommentCount(ID)
-		listing.Points, err = countPoints("thread", ID)
-		listing.HotScore = getHotScore(ID)
 		listing.VoteState, err = getVoteState(currentUserID, "thread", ID)
 		if err != nil {
 			http.Error(w, "Server error.", 500)
@@ -619,7 +617,13 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Thread does not exist.", 404)
 		return
 	}
+	for i := range allListings {
+		allListings[i].Points, _ = countPoints("thread", base36to10(allListings[i].ID))
+	}
 	if sortBy == "hot" {
+		for i := range allListings {
+			allListings[i].HotScore = getHotScore(base36to10(allListings[i].ID))
+		}
 		sort.Slice(allListings, func(i, j int) bool {
 			return allListings[i].HotScore > allListings[j].HotScore
 		})
@@ -633,11 +637,6 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 				allListings[i], allListings[j] = allListings[j], allListings[i]
 			}
 		}
-	}
-	if sortBy == "comments" {
-		sort.Slice(allListings, func(i, j int) bool {
-			return allListings[i].CommentCount > allListings[j].CommentCount
-		})
 	}
 	if sortBy == "old" || sortBy == "new" {
 		sort.Slice(allListings, func(i, j int) bool {
