@@ -5,9 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -47,6 +50,7 @@ var (
 	threadStatement  *sql.Stmt
 	commentStatement *sql.Stmt
 	voteStatement    *sql.Stmt
+	fileStatement    *sql.Stmt
 )
 
 // User structure
@@ -71,8 +75,11 @@ type Thread struct {
 	CreatedBy    string  `json:"createdBy"`
 	ThreadTitle  string  `json:"threadTitle"`
 	ThreadBody   string  `json:"threadBody"`
+	ThreadType   string  `json:"threadType"`
+	ThreadLink   string  `json:"threadLink"`
 	CreatedOn    int     `json:"createdOn"`
-	URL          string  `json:"url"`
+	ThreadURL    string  `json:"threadURL"`
+	ImageURL     string  `json:"imageURL"`
 	CommentCount int     `json:"commentCount"`
 	Points       int     `json:"points"`
 	VoteState    string  `json:"voteState"`
@@ -163,6 +170,12 @@ func getIDFromUsername(username string) (int, error) {
 	var id int
 	err := database.QueryRow("SELECT id FROM users WHERE username=?", username).Scan(&id)
 	return id, err
+}
+
+func getURLFromImageID(id int) (string, error) {
+	var url string
+	err := database.QueryRow("SELECT url FROM files WHERE id=?", id).Scan(&url)
+	return url, err
 }
 
 func titleToURL(title string) string {
@@ -321,6 +334,20 @@ func validateAndRenewToken(tokenString string) (string, string, error) {
 	return "", "", err
 }
 
+func isValidURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "" || u.Host != "" {
+		return true
+	}
+	if u.Scheme == "" || u.Host == "" || u.Path == "" {
+		return false
+	}
+	return true
+}
+
 func prepDB() {
 	usersStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT, password TEXT, email TEXT, created_on INTEGER, preferences TEXT)")
 	usersStatement.Exec()
@@ -328,15 +355,18 @@ func prepDB() {
 	subStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS subs (id INTEGER PRIMARY KEY, subname TEXT, created_by INTEGER, created_on INTEGER)")
 	subStatement.Exec()
 	subStatement, _ = database.Prepare("INSERT INTO subs (subname, created_by, created_on) VALUES (?, ?, ?)")
-	threadStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS threads (id INTEGER PRIMARY KEY, sub_id INTEGER, created_by INTEGER, thread_title TEXT, thread_body TEXT, created_on INTEGER)")
+	threadStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS threads (id INTEGER PRIMARY KEY, sub_id INTEGER, created_by INTEGER, thread_type TEXT, thread_title TEXT, thread_body TEXT, thread_link TEXT, image_id INTEGER, created_on INTEGER)")
 	threadStatement.Exec()
-	threadStatement, _ = database.Prepare("INSERT INTO threads (id, sub_id, created_by, thread_title, thread_body, created_on) VALUES (?, ?, ?, ?, ?, ?)")
+	threadStatement, _ = database.Prepare("INSERT INTO threads (id, sub_id, created_by, thread_type, thread_title, thread_body, thread_link, image_id, created_on) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	commentStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS comments (id INTEGER PRIMARY KEY, body TEXT, created_by INTEGER, thread_id INTEGER, sub_id INTEGER, parent_id INTEGER, created_on INTEGER)")
 	commentStatement.Exec()
 	commentStatement, _ = database.Prepare("INSERT INTO comments (id, body, created_by, thread_id, sub_id, parent_id, created_on) VALUES (?, ?, ?, ?, ?, ?, ?)")
 	voteStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS votes (id INTEGER PRIMARY KEY, vote_type TEXT, kind TEXT, kind_id INTEGER, user_id INTEGER, created_on INTEGER)")
 	voteStatement.Exec()
 	voteStatement, _ = database.Prepare("INSERT INTO votes (vote_type, kind, kind_id, user_id, created_on) VALUES (?, ?, ?, ?, ?)")
+	fileStatement, _ = database.Prepare("CREATE TABLE IF NOT EXISTS files (id INTEGER PRIMARY KEY, file_type TEXT, url TEXT, created_on INTEGER)")
+	fileStatement.Exec()
+	fileStatement, _ = database.Prepare("INSERT INTO files (id, file_type, url, created_on) VALUES (?, ?, ?, ?)")
 }
 
 func home(w http.ResponseWriter, r *http.Request) {
@@ -498,16 +528,54 @@ func createSub(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+func handleImage(r *http.Request) (int, error) {
+	file, handler, err := r.FormFile("file")
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	buffer := make([]byte, 512)
+	_, err = file.Read(buffer)
+	fileType := http.DetectContentType(buffer)[:5]
+	if fileType != "image" {
+		return 0, http.ErrBodyNotAllowed
+	}
+	file.Seek(0, io.SeekStart)
+	var (
+		lastFileID int
+		fileID     int
+	)
+	err = database.QueryRow("SELECT id FROM files ORDER BY id DESC LIMIT 1").Scan(&lastFileID)
+	if err != nil {
+		fileID = 10000
+	} else {
+		fileID = lastFileID + 1
+	}
+	splitFileName := strings.Split(handler.Filename, ".")
+	fileExtension := splitFileName[len(splitFileName)-1]
+	fileName := base10to36(fileID) + "." + fileExtension
+	url := "/img/" + fileName
+	f, err := os.OpenFile("../public"+url, os.O_WRONLY|os.O_CREATE, 0666)
+	defer f.Close()
+	_, err = io.Copy(f, file)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	_, err = fileStatement.Exec(&fileID, &fileType, &url, &now)
+	return fileID, err
+}
+
 func createThread(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	data := map[string]string{}
-	err := json.NewDecoder(r.Body).Decode(&data)
+	w.Header().Set("Content-Type", "multipart/form-data")
+	err := r.ParseMultipartForm(10 << 20)
 	var thread Thread
-	thread.SubName = data["subName"]
-	thread.ThreadTitle = data["threadTitle"]
-	thread.ThreadBody = data["threadBody"]
-	token, ok := data["token"]
-	if !ok || err != nil {
+	thread.SubName = r.FormValue("subName")
+	thread.ThreadTitle = r.FormValue("threadTitle")
+	thread.ThreadBody = r.FormValue("threadBody")
+	thread.ThreadType = r.FormValue("threadType")
+	token := r.FormValue("token")
+	if err != nil {
 		http.Error(w, "Invalid.", 401)
 		return
 	}
@@ -530,6 +598,25 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, message, 403)
 		return
 	}
+	var imageID int
+	if thread.ThreadType == "image" {
+		imageID, err = handleImage(r)
+		if err == http.ErrBodyNotAllowed {
+			http.Error(w, "Invalid file format.", 406)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Server error.", 500)
+			return
+		}
+	}
+	if thread.ThreadType == "link" {
+		thread.ThreadLink = r.FormValue("threadLink")
+		if !isValidURL(thread.ThreadLink) {
+			http.Error(w, "Invalid url.", 403)
+			return
+		}
+	}
 	subID, err := getIDFromSubName(thread.SubName)
 	userID, err := getIDFromUsername(username)
 	if err != nil {
@@ -547,7 +634,7 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		threadID = lastThreadID + 1
 	}
 	now := time.Now().Unix()
-	_, err = threadStatement.Exec(&threadID, &subID, &userID, &thread.ThreadTitle, &thread.ThreadBody, now)
+	_, err = threadStatement.Exec(&threadID, &subID, &userID, &thread.ThreadType, &thread.ThreadTitle, &thread.ThreadBody, &thread.ThreadLink, &imageID, now)
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
@@ -578,9 +665,10 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		subID       int
 		createdByID int
 		ID          int
+		imageID     int
 	)
 	listingExists := false
-	rows, err := database.Query("SELECT id, sub_id, created_by, thread_title, created_on FROM threads")
+	rows, err := database.Query("SELECT id, sub_id, created_by, thread_type, thread_title, thread_link, image_id, created_on FROM threads")
 	if err != nil {
 		http.Error(w, "Server error.", 500)
 		return
@@ -588,13 +676,16 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	for rows.Next() {
 		var listing Thread
-		rows.Scan(&ID, &subID, &createdByID, &listing.ThreadTitle, &listing.CreatedOn)
-		listing.URL = titleToURL(listing.ThreadTitle)
+		rows.Scan(&ID, &subID, &createdByID, &listing.ThreadType, &listing.ThreadTitle, &listing.ThreadLink, &imageID, &listing.CreatedOn)
+		listing.ThreadURL = titleToURL(listing.ThreadTitle)
 		listing.SubName, err = getSubNameFromID(subID)
 		listing.CreatedBy, err = getUsernameFromID(createdByID)
 		listing.ID = base10to36(ID)
 		listing.CommentCount, err = getCommentCount(ID)
 		listing.VoteState, err = getVoteState(currentUserID, "thread", ID)
+		if imageID != 0 {
+			listing.ImageURL, err = getURLFromImageID(imageID)
+		}
 		if err != nil {
 			http.Error(w, "Server error.", 500)
 			return
@@ -628,6 +719,7 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		if kind == "thread" {
 			if listing.ID == id {
 				listing.Points, _ = countPoints("thread", ID)
+				listing.ImageURL, _ = getURLFromImageID(imageID)
 				err = database.QueryRow("SELECT thread_body FROM threads WHERE id=?", base36to10(id)).Scan(&listing.ThreadBody)
 				if err != nil {
 					http.Error(w, "Server error.", 500)
