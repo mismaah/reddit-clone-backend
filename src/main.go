@@ -719,7 +719,6 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		if kind == "thread" {
 			if listing.ID == id {
 				listing.Points, _ = countPoints("thread", ID)
-				listing.ImageURL, _ = getURLFromImageID(imageID)
 				err = database.QueryRow("SELECT thread_body FROM threads WHERE id=?", base36to10(id)).Scan(&listing.ThreadBody)
 				if err != nil {
 					http.Error(w, "Server error.", 500)
