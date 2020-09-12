@@ -130,6 +130,7 @@ func main() {
 	router.HandleFunc("/api/getcommentdata", getCommentData).Methods("POST")
 	router.HandleFunc("/api/createvote", createVote).Methods("POST")
 	router.HandleFunc("/api/updatepref", updatePreferences).Methods("POST")
+	router.HandleFunc("/api/search", search).Methods("GET")
 	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
@@ -640,10 +641,10 @@ func createThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := map[string]string{
-		"threadID": base10to36(threadID),
-		"url":      titleToURL(thread.ThreadTitle),
-		"token":    newToken,
-		"username": username,
+		"threadID":  base10to36(threadID),
+		"threadURL": titleToURL(thread.ThreadTitle),
+		"token":     newToken,
+		"username":  username,
 	}
 	json.NewEncoder(w).Encode(response)
 }
@@ -1013,4 +1014,23 @@ func updatePreferences(w http.ResponseWriter, r *http.Request) {
 		"preferences": preferences,
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+func search(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	params := r.URL.Query()
+	query := params.Get("query")
+	// kind := params.Get("kind")
+	subName := params.Get("in")
+	username := params.Get("by")
+	rankedResults, err := searchDB(query, subName, username)
+	if err == ErrNoMatches {
+		http.Error(w, "No matching search results.", 404)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(rankedResults)
 }
