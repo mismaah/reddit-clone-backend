@@ -87,3 +87,58 @@ func searchDB(term string, subName string, username string) ([]RankedRow, error)
 	}
 	return rankedRows, err
 }
+
+func getDataForSearchResults(results []RankedRow) ([]interface{}, error) {
+	var err error
+	var data []interface{}
+	for i := range results {
+		if results[i].Kind == "thread" {
+			var (
+				listing     = Thread{Kind: "thread"}
+				subID       int
+				createdByID int
+				ID          int
+				imageID     int
+			)
+			err := database.QueryRow("SELECT sub_id, created_by, thread_type, thread_title, thread_link, image_id, created_on FROM threads WHERE id=?", results[i].KindID).Scan(&subID, &createdByID, &listing.ThreadType, &listing.ThreadTitle, &listing.ThreadLink, &imageID, &listing.CreatedOn)
+			if err != nil {
+				return data, err
+			}
+			listing.SubName, err = getSubNameFromID(subID)
+			listing.CreatedBy, err = getUsernameFromID(createdByID)
+			listing.ID = base10to36(ID)
+			listing.CommentCount, err = getCommentCount(ID)
+			if imageID != 0 {
+				listing.ImageURL, err = getURLFromImageID(imageID)
+			}
+			if err != nil {
+				return data, err
+			}
+			listing.Points, _ = countPoints("thread", ID)
+			listing.ThreadURL = titleToURL(listing.ThreadTitle)
+			listing.ID = base10to36(results[i].KindID)
+			data = append(data, listing)
+		}
+		if results[i].Kind == "comment" {
+			var (
+				comment  = Comment{Kind: "comment"}
+				userID   int
+				threadID int
+				subID    int
+				parentID int
+			)
+			err := database.QueryRow("SELECT body, created_by, thread_id, sub_id, parent_id, created_on FROM comments WHERE id=?", results[i].KindID).Scan(&comment.Body, &userID, &threadID, &subID, &parentID, &comment.CreatedOn)
+			comment.ID = base10to36(results[i].KindID)
+			comment.Username, err = getUsernameFromID(userID)
+			comment.ThreadID = base10to36(threadID)
+			comment.SubName, err = getSubNameFromID(subID)
+			comment.ParentID = base10to36(parentID)
+			comment.Points, err = countPoints("comment", results[i].KindID)
+			if err != nil {
+				return data, err
+			}
+			data = append(data, comment)
+		}
+	}
+	return data, err
+}

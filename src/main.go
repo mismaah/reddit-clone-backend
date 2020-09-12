@@ -84,6 +84,7 @@ type Thread struct {
 	Points       int     `json:"points"`
 	VoteState    string  `json:"voteState"`
 	HotScore     float64 `json:"hotScore"`
+	Kind         string  `json:"kind"`
 }
 
 // Comment structure
@@ -98,6 +99,7 @@ type Comment struct {
 	Points    int       `json:"points"`
 	VoteState string    `json:"voteState"`
 	CreatedOn int       `json:"createdOn"`
+	Kind      string    `json:"kind"`
 }
 
 // Vote struct
@@ -1033,5 +1035,10 @@ func search(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Server error.", 500)
 		return
 	}
-	json.NewEncoder(w).Encode(rankedResults)
+	data, err := getDataForSearchResults(rankedResults)
+	if err != nil {
+		http.Error(w, "Server error.", 500)
+		return
+	}
+	json.NewEncoder(w).Encode(data)
 }
