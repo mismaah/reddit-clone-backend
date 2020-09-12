@@ -678,7 +678,6 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var listing Thread
 		rows.Scan(&ID, &subID, &createdByID, &listing.ThreadType, &listing.ThreadTitle, &listing.ThreadLink, &imageID, &listing.CreatedOn)
-		listing.ThreadURL = titleToURL(listing.ThreadTitle)
 		listing.SubName, err = getSubNameFromID(subID)
 		listing.CreatedBy, err = getUsernameFromID(createdByID)
 		listing.ID = base10to36(ID)
@@ -720,6 +719,7 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 		if kind == "thread" {
 			if listing.ID == id {
 				listing.Points, _ = countPoints("thread", ID)
+				listing.ThreadURL = titleToURL(listing.ThreadTitle)
 				err = database.QueryRow("SELECT thread_body FROM threads WHERE id=?", base36to10(id)).Scan(&listing.ThreadBody)
 				if err != nil {
 					http.Error(w, "Server error.", 500)
@@ -737,6 +737,7 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 	}
 	for i := range allListings {
 		allListings[i].Points, _ = countPoints("thread", base36to10(allListings[i].ID))
+		allListings[i].ThreadURL = titleToURL(allListings[i].ThreadTitle)
 	}
 	if sortBy == "hot" {
 		for i := range allListings {
