@@ -733,6 +733,10 @@ func getListingData(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if len(allListings) == 0 {
+		http.Error(w, "No threads.", 404)
+		return
+	}
 	if !listingExists {
 		http.Error(w, "Thread does not exist.", 404)
 		return
