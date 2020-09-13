@@ -8,7 +8,7 @@ import (
 )
 
 // ErrNoMatches returned when search has no results
-var ErrNoMatches = errors.New("sql: no matching search results")
+var ErrNoMatches = errors.New("no matching search results")
 
 // SearchRow structure
 type SearchRow struct {
@@ -27,10 +27,12 @@ type RankedRow struct {
 func searchDB(term string, subName string, username string) ([]RankedRow, error) {
 	query := fmt.Sprintf("SELECT id, thread_title, thread_body, thread_link FROM threads WHERE (thread_title LIKE '%%%s%%' OR thread_body LIKE '%%%s%%' or thread_link LIKE '%%%s%%')", term, term, term)
 	if subName != "" {
+		//check valid sub
 		subID, _ := getIDFromSubName(subName)
 		query += fmt.Sprintf("AND sub_id=%d", subID)
 	}
 	if username != "" {
+		//check valid user
 		userID, _ := getIDFromUsername(username)
 		query += fmt.Sprintf(" AND created_by=%d", userID)
 	}
