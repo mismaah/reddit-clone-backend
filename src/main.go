@@ -182,13 +182,13 @@ func getURLFromImageID(id int) (string, error) {
 }
 
 func titleToURL(title string) string {
-	url := strings.Replace(title, " ", "_", -1)
-	pattern := regexp.MustCompile(`[^a-zA-Z\d_]`)
-	url = pattern.ReplaceAllString(url, "")
-	if len(url) > urlMax {
-		url = url[0:urlMax]
+	threadURL := strings.Replace(title, " ", "_", -1)
+	// pattern := regexp.MustCompile(`[^a-zA-Z\d_]`)
+	// threadURL = pattern.ReplaceAllString(threadURL, "")
+	if len(threadURL) > urlMax {
+		threadURL = threadURL[0:urlMax]
 	}
-	return url
+	return threadURL
 }
 
 func getCommentCount(threadID int) (int, error) {
