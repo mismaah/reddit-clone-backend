@@ -133,7 +133,7 @@ func main() {
 	router.HandleFunc("/api/createvote", createVote).Methods("POST")
 	router.HandleFunc("/api/updatepref", updatePreferences).Methods("POST")
 	router.HandleFunc("/api/search", search).Methods("GET")
-	router.PathPrefix("/").Handler(http.FileServer(http.Dir("../public")))
+	router.PathPrefix("/").Handler(spaHandler{staticPath: "../public", indexPath: "index.html"})
 	handler := cors.Default().Handler(router) // remove in production
 	log.Println("http server started on :8000")
 	err := http.ListenAndServe(":8000", handler) // change handler to router in production
