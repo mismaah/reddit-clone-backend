@@ -183,10 +183,13 @@ func getURLFromImageID(id int) (string, error) {
 
 func titleToURL(title string) string {
 	threadURL := strings.Replace(title, " ", "_", -1)
-	// pattern := regexp.MustCompile(`[^a-zA-Z\d_]`)
-	// threadURL = pattern.ReplaceAllString(threadURL, "")
+	pattern := regexp.MustCompile(`[^a-zA-Z\d_\p{L}]`)
+	threadURL = pattern.ReplaceAllString(threadURL, "")
 	if len(threadURL) > urlMax {
 		threadURL = threadURL[0:urlMax]
+	}
+	if len(threadURL) == 0 {
+		threadURL = "thread"
 	}
 	return threadURL
 }
