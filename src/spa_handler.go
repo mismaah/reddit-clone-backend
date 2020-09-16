@@ -8,7 +8,7 @@ import (
 
 type spaHandler struct {
 	staticPath string
-	indexPath  string
+	indexPath  string // relative to static path
 }
 
 func (h spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
